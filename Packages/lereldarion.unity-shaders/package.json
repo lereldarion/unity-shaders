@@ -3,14 +3,12 @@
   "displayName": "Lereldarion Unity Shaders",
   "version": "1.0.0",
   "description": "Collection of useful shaders, made for VRChat",
-  "gitDependencies": {},
-  "vpmDependencies": {},
   "author": {
     "name": "Lereldarion",
-    "email": "131812197+lereldarion@users.noreply.github.com",
-    "url": "https://github.com/lereldarion/unity_shaders"
+    "url": "https://github.com/lereldarion/"
   },
-  "legacyFolders": {},
-  "legacyFiles": {},
-  "localPath": "C:\\Users\\franc\\Documents\\unity_shaders\\Packages\\lereldarion.unity-shaders"
+  "keywords": [
+    "shaders"
+  ],
+  "license": "MIT"
 }
