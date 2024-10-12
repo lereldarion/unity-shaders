@@ -1,0 +1,16 @@
+{
+  "name": "lereldarion.unity-shaders",
+  "displayName": "Lereldarion Unity Shaders",
+  "version": "0.0.1",
+  "description": "Collection of useful shaders, made for VRChat",
+  "gitDependencies": {},
+  "vpmDependencies": {},
+  "author": {
+    "name": "Lereldarion",
+    "email": "131812197+lereldarion@users.noreply.github.com",
+    "url": "https://github.com/lereldarion/unity_shaders"
+  },
+  "legacyFolders": {},
+  "legacyFiles": {},
+  "localPath": "C:\\Users\\franc\\Documents\\unity_shaders\\Packages\\lereldarion.unity-shaders"
+}
