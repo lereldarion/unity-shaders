@@ -25,7 +25,7 @@ Material:
     m_TexEnvs: []
     m_Ints: []
     m_Floats:
-    - _Grid_Zoom: 5
+    - _Grid_Zoom: 1
     - _Overlay_Fullscreen: 0
     m_Colors: []
   m_BuildTextureStacks: []
