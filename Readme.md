@@ -5,7 +5,7 @@ Install using VCC at https://lereldarion.github.io/vpm-listing/.
 Install from Unity Packages : see [releases](https://github.com/lereldarion/unity-shaders/releases).
 
 ## Overlays
-Detailed [documentation](Packages/lereldarion.unity-shaders/Runtime/Overlays/Readme.md).
+Detailed [documentation](Packages/lereldarion.unity-shaders/Overlays/Readme.md).
 
 Grid / Normals / Wireframe are based on the well known ones from https://github.com/netri/Neitri-Unity-Shaders, but with improvements in precision and removal of `GrabPass`.
 
