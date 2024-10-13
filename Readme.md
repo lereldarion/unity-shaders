@@ -1,6 +1,6 @@
 # Lereldarion Unity Shaders
 
-Install with VCC TODO.
+Install with VCC from https://lereldarion.github.io/vpm-listing/.
 
 Install from Unity Packages : see [releases](https://github.com/lereldarion/unity-shaders/releases).
 
