@@ -5,11 +5,12 @@
   "description": "Collection of useful shaders, made for VRChat",
   "author": {
     "name": "Lereldarion",
-    "url": "https://github.com/lereldarion/"
+    "url": "https://github.com/lereldarion/unity-shaders"
   },
   "keywords": [
     "shaders"
   ],
   "license": "MIT",
+  "type": "assets",
   "unity": "2019.4"
 }
