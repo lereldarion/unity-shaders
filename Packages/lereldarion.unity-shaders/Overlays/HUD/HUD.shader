@@ -8,7 +8,6 @@ Shader "Lereldarion/Overlay/HUD" {
     Properties {
         [HDR] _Color("Sight emissive color", Color) = (0, 1, 0, 1)
         _Glyph_Texture_SDF ("Texture with SDF glyphs", 2D) = "white"
-        [ToggleUI] _Mirror_TBN_X("Fix range text orientation by mirroring tangent space x", Float) = 0
         [ToggleUI] _Overlay_Fullscreen("Force Screenspace Fullscreen", Float) = 0
     }
     SubShader {
@@ -34,16 +33,16 @@ Shader "Lereldarion/Overlay/HUD" {
             
             #include "UnityCG.cginc"
 
-            struct VertexInput {
-                float4 position_os : POSITION;
-                float3 normal_os : NORMAL;
-                float4 tangent_os : TANGENT;
-                UNITY_VERTEX_INPUT_INSTANCE_ID
-            };
-            struct FragmentInput {
-                float4 position : SV_POSITION;
-                float3 camera_to_geometry_ws : CAMERA_TO_GEOMETRY_WS;
+            ////////////////////////////////////////////////////////////////////////////////////
 
+            // Macro required: https://issuetracker.unity3d.com/issues/gearvr-singlepassstereo-image-effects-are-not-rendering-properly
+            // Requires a source of dynamic light to be populated https://github.com/netri/Neitri-Unity-Shaders#types ; sad...
+            UNITY_DECLARE_DEPTH_TEXTURE(_CameraDepthTexture);
+
+            static const float pi = 3.14159265359;
+
+            // Data that can be precomputed at vertex stage.
+            struct HudData {
                 // Unit vectors rotating with the overlay surface
                 nointerpolation float3 rotating_uv_x_ws : ROTATING_UV_X;
                 nointerpolation float3 rotating_uv_y_ws : ROTATING_UV_Y;
@@ -61,88 +60,89 @@ Shader "Lereldarion/Overlay/HUD" {
                 nointerpolation float azimuth_radiants : AZIMUTH;
                 nointerpolation float elevation_radiants : ELEVATION;
 
+                static HudData compute(float3 normal_ws, float3 tangent_ws, bool normal_is_forward) {
+                    HudData hd;
+
+                    float forward_flip = normal_is_forward ? 1 : -1;
+                    float3 forward_normal_ws = normal_ws * forward_flip;
+                    float3 forward_tangent_ws = tangent_ws * forward_flip;
+
+                    // Use tangent space to follow quad rotations.
+                    hd.rotating_uv_x_ws = forward_tangent_ws;
+                    hd.rotating_uv_y_ws = normalize(cross(forward_normal_ws, forward_tangent_ws)); // No tangent.w, as we want a right handed TBN.
+
+                    // Similar skybox coordinate system but y stays aligned to worldspace vertical.
+                    const float3 up_direction_ws = float3(0, 1, 0);
+                    const float3 horizontal_tangent = normalize(cross(forward_normal_ws, up_direction_ws));
+                    hd.aligned_uv_x_ws = horizontal_tangent * -1 /* needed but not sure why ; ht should go to the right */;
+                    hd.aligned_uv_y_ws = cross(horizontal_tangent, forward_normal_ws);
+
+                    // World azimuth and elevation of the surface forward normal
+                    const float3 east_ws = float3(1, 0, 0);
+                    const float3 north_ws = float3(0, 0, 1);
+                    const float angular_dist_to_north_0_pi = acos(dot(horizontal_tangent, east_ws));
+                    hd.azimuth_radiants = pi - angular_dist_to_north_0_pi * sign(dot(horizontal_tangent, north_ws)); // 0 at north, pi/2 east, pi south, 3pi/2 west
+                    const float angular_dist_to_up_0_pi = acos(dot(normal_ws, up_direction_ws));
+                    hd.elevation_radiants = pi/2 - angular_dist_to_up_0_pi; // -pi/2 when looking at the bottom, pi/2 at the top
+
+                    // Compute depth from the depth texture.
+                    // Sample at the crosshair center, which means aligned with the normal of the quad.
+                    // Always use data from the first eye to have matching ranges between eyes.
+                    #if UNITY_SINGLE_PASS_STEREO
+                    const float3 camera_pos_ws = unity_StereoWorldSpaceCameraPos[0];
+                    const float4x4 matrix_vp = unity_StereoMatrixVP[0];
+                    #else
+                    const float3 camera_pos_ws = _WorldSpaceCameraPos;
+                    const float4x4 matrix_vp = UNITY_MATRIX_VP;
+                    #endif
+                    const float3 sample_point_ws = camera_pos_ws + forward_normal_ws;
+                    const float4 sample_point_cs = mul(matrix_vp, float4(sample_point_ws, 1)); // UnityWorldToClipPos()
+                    float4 screen_pos = ComputeNonStereoScreenPos(sample_point_cs);
+                    #if UNITY_SINGLE_PASS_STEREO
+                    // o.xy = TransformStereoScreenSpaceTex(o.xy, pos.w);
+                    screen_pos.xy = screen_pos.xy * unity_StereoScaleOffset[0].xy + unity_StereoScaleOffset[0].zw * screen_pos.w;
+                    #endif
+                    const float depth_texture_value = SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(screen_pos.xy / screen_pos.w, 0, 4 /* mipmap level */));
+                    const float range_ws = LinearEyeDepth(depth_texture_value) / sample_point_cs.w;
+
+                    // Pre compute digits to print for range and world position
+                    const float4 printed_values = float4(
+                        range_ws,
+                        abs(camera_pos_ws) // sign handled in fragment
+                    );
+                    uint4 int_values = clamp((uint4) printed_values, 0, 9999);
+                    const uint4 digit_1 = int_values % 10; int_values = int_values / 10;
+                    const uint4 digit_10 = int_values % 10; int_values = int_values / 10;
+                    const uint4 digit_100 = int_values % 10; int_values = int_values / 10;
+                    const uint4 digit_1000 = int_values;
+                    hd.range_digits   = uint4(digit_1000[0], digit_100[0], digit_10[0], digit_1[0]);
+                    hd.world_x_digits = uint4(digit_1000[1], digit_100[1], digit_10[1], digit_1[1]);
+                    hd.world_y_digits = uint4(digit_1000[2], digit_100[2], digit_10[2], digit_1[2]);
+                    hd.world_z_digits = uint4(digit_1000[3], digit_100[3], digit_10[3], digit_1[3]);
+
+                    return hd;
+                }
+            };
+
+            ////////////////////////////////////////////////////////////////////////////////////
+
+            struct VertexInput {
+                float4 position_os : POSITION;
+                float3 normal_os : NORMAL;
+                float4 tangent_os : TANGENT;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+            };
+
+            struct FragmentInput {
+                float4 position : SV_POSITION;
+                float3 camera_to_geometry_ws : CAMERA_TO_GEOMETRY_WS;
+                HudData hud_data;
+
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
-            // Macro required: https://issuetracker.unity3d.com/issues/gearvr-singlepassstereo-image-effects-are-not-rendering-properly
-            // Requires a source of dynamic light to be populated https://github.com/netri/Neitri-Unity-Shaders#types ; sad...
-            UNITY_DECLARE_DEPTH_TEXTURE(_CameraDepthTexture);
-
-            static const float pi = 3.14159265359;
-            uniform float _Mirror_TBN_X;
-
-            void vertex_stage (VertexInput i, out FragmentInput o) {
-                UNITY_SETUP_INSTANCE_ID(i);
-
-                o.position = UnityObjectToClipPos(i.position_os);
-                o.camera_to_geometry_ws = mul(unity_ObjectToWorld, i.position_os).xyz - _WorldSpaceCameraPos;
-                UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
-                
-                // Uniform data
-
-                // WS TBN. Also undoes skinning skewing, when integrated in a skinned mesh.
-                float3 normal_ws = UnityObjectToWorldNormal(i.normal_os);
-                float3 tangent_ws = UnityObjectToWorldNormal(i.tangent_os.xyz);
-
-                // Flip TBN to have forward orientation. This make the HUD 2 sided with mirror.
-                if(dot(normal_ws, o.camera_to_geometry_ws) < 0) {
-                    normal_ws = -normal_ws;
-                    tangent_ws = -tangent_ws;
-                }
-
-                // Use tangent space to follow quad rotations
-                float mirror_factor = _Mirror_TBN_X ? 1 : -1;
-                o.rotating_uv_x_ws = tangent_ws * mirror_factor;
-                o.rotating_uv_y_ws = normalize(cross(normal_ws, tangent_ws) * i.tangent_os.w);
-
-                // Similar skybox coordinate system but y stays aligned to worldspace vertical.
-                const float3 up_direction_ws = float3(0, 1, 0);
-                const float3 horizontal_tangent = normalize(cross(normal_ws, up_direction_ws));
-                o.aligned_uv_x_ws = horizontal_tangent * -1 /* again needed to mirror text correctly */;
-                o.aligned_uv_y_ws = cross(horizontal_tangent, normal_ws);
-                
-                // World azimuth and elevation of the surface forward normal
-                const float3 east_ws = float3(1, 0, 0);
-                const float3 north_ws = float3(0, 0, 1);
-                const float angular_dist_to_north_0_pi = acos(dot(horizontal_tangent, east_ws));
-                o.azimuth_radiants = pi - angular_dist_to_north_0_pi * sign(dot(horizontal_tangent, north_ws)); // 0 at north, pi/2 east, pi south, 3pi/2 west
-                const float angular_dist_to_up_0_pi = acos(dot(normal_ws, up_direction_ws));
-                o.elevation_radiants = pi/2 - angular_dist_to_up_0_pi; // -pi/2 when looking at the bottom, pi/2 at the top
-
-                // Compute depth from the depth texture.
-                // Sample at the crosshair center, which means aligned with the normal of the quad.
-                // Always use data from the first eye to have matching ranges between eyes.
-                #if UNITY_SINGLE_PASS_STEREO
-                const float3 camera_pos_ws = unity_StereoWorldSpaceCameraPos[0];
-                const float4x4 matrix_vp = unity_StereoMatrixVP[0];
-                #else
-                const float3 camera_pos_ws = _WorldSpaceCameraPos;
-                const float4x4 matrix_vp = UNITY_MATRIX_VP;
-                #endif
-                const float3 sample_point_ws = camera_pos_ws + normal_ws;
-                const float4 sample_point_cs = mul(matrix_vp, float4(sample_point_ws, 1)); // UnityWorldToClipPos()
-                float4 screen_pos = ComputeNonStereoScreenPos(sample_point_cs);
-                #if UNITY_SINGLE_PASS_STEREO
-                // o.xy = TransformStereoScreenSpaceTex(o.xy, pos.w);
-                screen_pos.xy = screen_pos.xy * unity_StereoScaleOffset[0].xy + unity_StereoScaleOffset[0].zw * screen_pos.w;
-                #endif
-                const float depth_texture_value = SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(screen_pos.xy / screen_pos.w, 0, 4 /* mipmap level */));
-                const float range_ws = LinearEyeDepth(depth_texture_value) / sample_point_cs.w;
-
-                // Pre compute digits to print for range and world position
-                const float4 printed_values = float4(
-                    range_ws,
-                    abs(camera_pos_ws) // sign handled in fragment
-                );
-                uint4 int_values = clamp((uint4) printed_values, 0, 9999);
-                const uint4 digit_1 = int_values % 10; int_values = int_values / 10;
-                const uint4 digit_10 = int_values % 10; int_values = int_values / 10;
-                const uint4 digit_100 = int_values % 10; int_values = int_values / 10;
-                const uint4 digit_1000 = int_values;
-                o.range_digits   = uint4(digit_1000[0], digit_100[0], digit_10[0], digit_1[0]);
-                o.world_x_digits = uint4(digit_1000[1], digit_100[1], digit_10[1], digit_1[1]);
-                o.world_y_digits = uint4(digit_1000[2], digit_100[2], digit_10[2], digit_1[2]);
-                o.world_z_digits = uint4(digit_1000[3], digit_100[3], digit_10[3], digit_1[3]); 
+            void vertex_stage (VertexInput input, out VertexInput output) {
+                output = input;
             }
 
             ////////////////////////////////////////////////////////////////////////////////////
@@ -152,12 +152,19 @@ Shader "Lereldarion/Overlay/HUD" {
             uniform float _VRChatCameraMode;
 
             [maxvertexcount(4)]
-            void geometry_stage(triangle FragmentInput input[3], uint triangle_id : SV_PrimitiveID, inout TriangleStream<FragmentInput> stream) {
-                UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input[0]);
+            void geometry_stage(triangle VertexInput input[3], uint triangle_id : SV_PrimitiveID, inout TriangleStream<FragmentInput> stream) {
+                UNITY_SETUP_INSTANCE_ID(input[0]);
+                
+                FragmentInput output;
+                UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
+
+                UNITY_BRANCH
                 if(_Overlay_Fullscreen == 1 && _VRChatMirrorMode == 0 && _VRChatCameraMode == 0) {
                     // Fullscreen mode : generate a fullscreen quad for triangle 0 and discard others
                     if (triangle_id == 0) {
-                        FragmentInput output = input[0];
+                        float3 normal_ws = normalize(mul((float3x3) unity_MatrixInvV, float3(0, 0, -1)));
+                        float3 tangent_ws = normalize(mul((float3x3) unity_MatrixInvV, float3(1, 0, 0)));
+                        output.hud_data = HudData::compute(normal_ws, tangent_ws, true);
 
                         // Generate in VS close to near clip plane. Having non CS positions is essential to return to WS later.
                         float2 quad[4] = { float2(-1, -1), float2(-1, 1), float2(1, -1), float2(1, 1) };
@@ -177,9 +184,25 @@ Shader "Lereldarion/Overlay/HUD" {
                     }
                 } else {
                     // Normal geometry mode : forward triangle
-                    stream.Append(input[0]);
-                    stream.Append(input[1]);
-                    stream.Append(input[2]);
+
+                    // Use TBN from vertex 0 to generate data.
+                    // TBN should be uniform on the mesh for the shader to work anyway.
+                    // Using WS TBN is no more costly than OS, because OS may be skewed by skinning in a skinned mesh.
+                    float3 normal_ws = UnityObjectToWorldNormal(input[0].normal_os);
+                    float3 tangent_ws = UnityObjectToWorldNormal(input[0].tangent_os.xyz);
+                    
+                    // Flip TBN to have forward orientation. This make the HUD 2 sided with mirror.
+                    float4 triangle_barycenter_os = (1./3.) * (input[0].position_os + input[1].position_os + input[2].position_os);
+                    float3 camera_to_triangle_ws = mul(unity_ObjectToWorld, triangle_barycenter_os).xyz - _WorldSpaceCameraPos;
+                    bool normal_is_forward = dot(normal_ws, camera_to_triangle_ws) >= 0;
+                    output.hud_data = HudData::compute(normal_ws, tangent_ws, normal_is_forward);
+                    
+                    UNITY_UNROLL
+                    for(uint i = 0; i < 3; i += 1) {
+                        output.position = UnityObjectToClipPos(input[i].position_os);
+                        output.camera_to_geometry_ws = mul(unity_ObjectToWorld, input[i].position_os).xyz - _WorldSpaceCameraPos;
+                        stream.Append(output);
+                    }
                 }
             }
 
@@ -258,13 +281,14 @@ Shader "Lereldarion/Overlay/HUD" {
                     // 1 interior, 0 exterior
                     return (1 - tex_sdf) - thickness;
                 }
+
+                static GlyphRenderer create() {
+                    GlyphRenderer r;
+                    // Usually the corners are outside glyphs
+                    r.glyph_texture_coord = float2(0, 0);
+                    return r;
+                }
             };
-            GlyphRenderer create_glyph_renderer() {
-                GlyphRenderer r;
-                // Usually the corners are outside glyphs
-                r.glyph_texture_coord = float2(0, 0);
-                return r;
-            }
 
             ////////////////////////////////////////////////////////////////////////////////////
             // Range
@@ -291,7 +315,7 @@ Shader "Lereldarion/Overlay/HUD" {
                 }
             }
 
-            void draw_world_position_block(float2 uv, FragmentInput i, inout GlyphRenderer renderer) {
+            void draw_world_position_block(float2 uv, HudData hud_data, inout GlyphRenderer renderer) {
                 #if UNITY_SINGLE_PASS_STEREO // Consistent position. Digits are computed in vertex, but sign is cheap to do there.
                 const float3 camera_pos_ws = unity_StereoWorldSpaceCameraPos[0];
                 #else
@@ -305,9 +329,9 @@ Shader "Lereldarion/Overlay/HUD" {
                 const float2 h_offset = -float2(glyph_max_box_size.x, 0) * scale;
                 const float2 bounding_box_bottom_left = origin + 4 * v_offset + 5 * h_offset;
                 if (all(bounding_box_bottom_left < uv && uv < origin)) {
-                    draw_world_position(uv, origin + 1 * v_offset, scale, camera_pos_ws.x < 0, i.world_x_digits, renderer);
-                    draw_world_position(uv, origin + 2 * v_offset, scale, camera_pos_ws.y < 0, i.world_y_digits, renderer);
-                    draw_world_position(uv, origin + 3 * v_offset, scale, camera_pos_ws.z < 0, i.world_z_digits, renderer);
+                    draw_world_position(uv, origin + 1 * v_offset, scale, camera_pos_ws.x < 0, hud_data.world_x_digits, renderer);
+                    draw_world_position(uv, origin + 2 * v_offset, scale, camera_pos_ws.y < 0, hud_data.world_y_digits, renderer);
+                    draw_world_position(uv, origin + 3 * v_offset, scale, camera_pos_ws.z < 0, hud_data.world_z_digits, renderer);
                 }
             }
 
@@ -431,22 +455,22 @@ Shader "Lereldarion/Overlay/HUD" {
 
             uniform fixed4 _Color;
 
-            fixed4 fragment_stage (FragmentInput i) : SV_Target {
-                UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(i);
+            fixed4 fragment_stage (FragmentInput input) : SV_Target {
+                UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
 
                 // i.{aligned/rotating}_uv_{x/y}_os are vectors in a plane facing the view.
                 // We want a measure of angle to view dir ~ sin angle to view dir = cos angle to these plane vectors.
-                const float3 ray_ws = normalize(i.camera_to_geometry_ws);
-                const float2 rotating_uv = float2(dot(ray_ws, i.rotating_uv_x_ws), dot(ray_ws, i.rotating_uv_y_ws));
-                const float2 aligned_uv = float2(dot(ray_ws, i.aligned_uv_x_ws), dot(ray_ws, i.aligned_uv_y_ws));
+                const float3 ray_ws = normalize(input.camera_to_geometry_ws);
+                const float2 rotating_uv = float2(dot(ray_ws, input.hud_data.rotating_uv_x_ws), dot(ray_ws, input.hud_data.rotating_uv_y_ws));
+                const float2 aligned_uv = float2(dot(ray_ws, input.hud_data.aligned_uv_x_ws), dot(ray_ws, input.hud_data.aligned_uv_y_ws));
 
                 float sdf = 1000 * sight_pattern_sdf(rotating_uv); // Need high scale due to uv units
 
-                GlyphRenderer renderer = create_glyph_renderer();
-                draw_range_counter(rotating_uv, i.range_digits, renderer);
-                draw_world_position_block(rotating_uv, i, renderer);
-                sdf = min(sdf, 1000 * elevation_display_sdf(aligned_uv, i.elevation_radiants, renderer));
-                sdf = min(sdf, 1000 * azimuth_display_sdf(aligned_uv, i.azimuth_radiants, renderer));
+                GlyphRenderer renderer = GlyphRenderer::create();
+                draw_range_counter(rotating_uv, input.hud_data.range_digits, renderer);
+                draw_world_position_block(rotating_uv, input.hud_data, renderer);
+                sdf = min(sdf, 1000 * elevation_display_sdf(aligned_uv, input.hud_data.elevation_radiants, renderer));
+                sdf = min(sdf, 1000 * azimuth_display_sdf(aligned_uv, input.hud_data.azimuth_radiants, renderer));
                 sdf = min(sdf, 3 * renderer.sdf(0.15)); // Scale for sharpness
 
                 // We have few pixels, so make a smooth border FIXME improve consistency
