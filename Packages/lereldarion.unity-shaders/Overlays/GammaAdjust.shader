@@ -1,3 +1,6 @@
+// Made by Lereldarion (https://github.com/lereldarion/unity-shaders)
+// Free to redistribute under the MIT license
+
 // An overlay which amplifies lighting by using a gamma curve with fractional exponent.
 // Added fullscreen mode.
 

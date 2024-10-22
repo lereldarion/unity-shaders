@@ -1,4 +1,7 @@
-﻿// Shader with no output.
+﻿// Made by Lereldarion (https://github.com/lereldarion/unity-shaders)
+// Free to redistribute under the MIT license
+
+// Shader with no output.
 // Useful to fill an unused material slot in animations with material swaps.
 // It is better to disable the renderer if possible.
 Shader "Lereldarion/Hidden" {

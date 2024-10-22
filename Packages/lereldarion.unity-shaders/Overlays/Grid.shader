@@ -1,3 +1,6 @@
+// Made by Lereldarion (https://github.com/lereldarion/unity-shaders)
+// Free to redistribute under the MIT license
+
 // An overlay which displays a 1m grid overlapped onto world, from data sampled in the depth texture. Requires dynamic lighting to work (for the depth texture).
 //
 // Initial idea from https://github.com/netri/Neitri-Unity-Shaders

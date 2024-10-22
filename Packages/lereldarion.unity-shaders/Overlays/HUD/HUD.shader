@@ -1,3 +1,6 @@
+// Made by Lereldarion (https://github.com/lereldarion/unity-shaders)
+// Free to redistribute under the MIT license
+
 // Overlay at optical infinity (reflecting sight), with crosshair, rangefinder distance, and worldspace compass.
 // Attached to a flat surface with uniform UVs (like a quad), it will orient itself with the tangent space.
 // Can be adapted to use object space if necessary.
