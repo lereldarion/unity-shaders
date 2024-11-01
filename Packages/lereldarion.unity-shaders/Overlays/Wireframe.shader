@@ -9,6 +9,7 @@
 
 Shader "Lereldarion/Overlay/Wireframe" {
     Properties {
+        [Header(Overlay)]
         [ToggleUI] _Overlay_Fullscreen("Force Screenspace Fullscreen", Float) = 0
     }
     SubShader {

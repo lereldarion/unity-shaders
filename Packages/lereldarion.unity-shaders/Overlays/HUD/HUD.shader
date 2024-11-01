@@ -6,8 +6,11 @@
 // Can be adapted to use object space if necessary.
 Shader "Lereldarion/Overlay/HUD" {
     Properties {
-        [HDR] _Color("Sight emissive color", Color) = (0, 1, 0, 1)
+        [Header(HUD)]
+        [HDR] _Color("Emissive color", Color) = (0, 1, 0, 1)
         _Glyph_Texture_SDF ("Texture with SDF glyphs", 2D) = "white"
+
+        [Header(Overlay)]
         [ToggleUI] _Overlay_Fullscreen("Force Screenspace Fullscreen", Float) = 0
     }
     SubShader {

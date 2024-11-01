@@ -9,7 +9,11 @@
 
 Shader "Lereldarion/Overlay/Grid" {
     Properties {
-        _Grid_Zoom("Grid Zoom", Float) = 1
+        [Header(Grid)]
+        _Grid_Size_Meters("Interval size (meters)", Float) = 1
+        _Grid_Line_Width_01("Line width (% of interval)", Range(0, 1)) = 0.01
+
+        [Header(Overlay)]
         [ToggleUI] _Overlay_Fullscreen("Force Screenspace Fullscreen", Float) = 0
     }
     SubShader {
@@ -125,8 +129,9 @@ Shader "Lereldarion/Overlay/Grid" {
             float3 distance_to_01_grid_lines(float3 position) {
                 return abs(frac(0.5 + position) - 0.5);
             }
-
-            uniform float _Grid_Zoom;
+            
+            uniform float _Grid_Size_Meters;
+            uniform float _Grid_Line_Width_01;
 
             fixed4 fragment_stage (FragmentInput input) : SV_Target {
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
@@ -136,7 +141,7 @@ Shader "Lereldarion/Overlay/Grid" {
                 float3 ws = mul(unity_MatrixInvV, float4(vs_0_0, 1)).xyz;
                                 
                 // Idea : add tint if position is close to axis xyz at grid_size intervals;
-                float3 grid_distance = distance_to_01_grid_lines(_Grid_Zoom * ws);
+                float3 grid_distance = distance_to_01_grid_lines(ws / _Grid_Size_Meters);
                 // non-linearize to spike if distance is 0
                 float3 grid_proximity = saturate(0.5 - grid_distance * grid_distance * 1000);
                 // Already fits Blender colors : x=red, y=green, z=blue

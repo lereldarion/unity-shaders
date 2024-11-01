@@ -6,7 +6,10 @@
 
 Shader "Lereldarion/Overlay/GammaAdjust" {
     Properties {
+        [Header(Gamma)]
         _Gamma_Adjust_Value("Gamma Adjust Value", Range(-5, 5)) = 0
+
+        [Header(Overlay)]
         [ToggleUI] _Overlay_Fullscreen("Force Screenspace Fullscreen", Float) = 0
     }
     SubShader {
