@@ -6,12 +6,13 @@
 // Initial idea from https://github.com/netri/Neitri-Unity-Shaders
 // Improved with SPS-I support, Fullscreen "screenspace" mode.
 // Rewritten way of recreating VS positions using interpolated VS ray : precise, removes inverse, avoids unavailable unity_MatrixInvP.
+// Replaced emission by alpha replacement, and used nicer grid from bgolus (https://bgolus.medium.com/the-best-darn-grid-shader-yet-727f9278b9d8).
 
 Shader "Lereldarion/Overlay/Grid" {
     Properties {
         [Header(Grid)]
         _Grid_Size_Meters("Interval size (meters)", Float) = 1
-        _Grid_Line_Width_01("Line width (% of interval)", Range(0, 1)) = 0.01
+        _Grid_Line_Width_01("Line width (% of interval)", Range(0, 1)) = 0.02
 
         [Header(Overlay)]
         [ToggleUI] _Overlay_Fullscreen("Force Screenspace Fullscreen", Float) = 0
@@ -25,7 +26,7 @@ Shader "Lereldarion/Overlay/Grid" {
         }
         
         Cull Off
-        Blend One One // Emission
+        Blend One OneMinusSrcAlpha
         ZWrite Off
         ZTest Less
 
@@ -125,9 +126,26 @@ Shader "Lereldarion/Overlay/Grid" {
                     return shifted_ray_vs * LinearEyeDepth(raw);
                 }
             };
-
-            float3 distance_to_01_grid_lines(float3 position) {
-                return abs(frac(0.5 + position) - 0.5);
+            
+            float3 bgolus_uv_01_grid(float3 uv, float line_width) {
+                // From https://bgolus.medium.com/the-best-darn-grid-shader-yet-727f9278b9d8
+                float3 duv = fwidth(uv);
+                float3 draw_width = clamp(line_width, duv, 0.5);
+                float3 grid_uv = abs(frac(uv - 0.5) * 2.0 - 1.0); // symmetrical sawtooth, 0->0, 0.5->1, 1->0
+                float3 line_AA = max(duv * 1.5, 0.0000001); // Prevent div by 0 in smoothstep
+                float3 pattern = smoothstep(draw_width + line_AA, draw_width - line_AA, grid_uv);
+                pattern *= saturate(10 * line_width / draw_width); // fade to solid color at long distances
+                pattern = lerp(pattern, line_width, saturate(duv * 2.0 - 1.0)); // fade before moire patterns
+                return pattern;
+            }
+            
+            float3 old_grid_pattern(float3 uv) {
+                // Idea : add tint if position is close to axis xyz at grid_size intervals;
+                float3 grid_distance = abs(frac(0.5 + uv) - 0.5);
+                // non-linearize to spike if distance is 0
+                float3 grid_proximity = saturate(0.5 - grid_distance * grid_distance * 1000);
+                // Already fits Blender colors : x=red, y=green, z=blue
+                return grid_proximity;
             }
             
             uniform float _Grid_Size_Meters;
@@ -139,13 +157,12 @@ Shader "Lereldarion/Overlay/Grid" {
                 SceneReconstruction sr = SceneReconstruction::init(input);
                 float3 vs_0_0 = sr.position_vs();
                 float3 ws = mul(unity_MatrixInvV, float4(vs_0_0, 1)).xyz;
-                                
-                // Idea : add tint if position is close to axis xyz at grid_size intervals;
-                float3 grid_distance = distance_to_01_grid_lines(ws / _Grid_Size_Meters);
-                // non-linearize to spike if distance is 0
-                float3 grid_proximity = saturate(0.5 - grid_distance * grid_distance * 1000);
-                // Already fits Blender colors : x=red, y=green, z=blue
-                return float4(grid_proximity, 1);
+
+                float3 grid_pattern = bgolus_uv_01_grid(ws / _Grid_Size_Meters, _Grid_Line_Width_01);
+
+                // Replace color only if we are on a line
+                float opacity = max(grid_pattern.x, max(grid_pattern.y, grid_pattern.z));
+                return fixed4(grid_pattern, opacity);                                
             }
             ENDCG
         }
