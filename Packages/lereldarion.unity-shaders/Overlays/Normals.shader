@@ -102,8 +102,8 @@ Shader "Lereldarion/Overlay/Normals" {
                     // Use derivatives to get ray for neighbouring pixels.
                     // This is exact because ray is linear on a fragment.
                     // TODO improve by using ddx/ddy on separate position_vs / position.w and then divide ?
-                    o.ray_dx_vs = ddx(o.ray_vs);
-                    o.ray_dy_vs = ddy(o.ray_vs);
+                    o.ray_dx_vs = ddx_fine(o.ray_vs);
+                    o.ray_dy_vs = ddy_fine(o.ray_vs);
                     return o;
                 }
 
