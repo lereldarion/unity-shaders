@@ -94,7 +94,9 @@ Shader "Lereldarion/Overlay/GammaAdjust" {
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(i);
 
                 fixed4 scene_color = tex2Dproj(_GammaAdjustGrabTexture, i.grab_screen_pos); // FIXME convert to DX11 sampler without mipmap
-                return fixed4(pow(scene_color.rgb, i.gamma), 1);
+                fixed3 clamped_color = saturate(scene_color.rgb); // Avoid screen explosion at positive gamma + emission (>1) + bloom.
+                fixed3 emission = scene_color - clamped_color;  
+                return fixed4(pow(clamped_color, i.gamma) + emission, 1);
             }
 
             ENDCG
