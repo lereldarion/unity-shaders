@@ -69,3 +69,8 @@ This shader requires a texture for the digits, but due to the SDF strategy it on
 Material that does not render the triangles.
 
 This is useful to fill material slots that cannot be disabled by animators on avatars (skinned mesh slots).
+
+## Debug TBN
+Applied to mesh, this shaders displays the tangent space at each vertex as small 3D lines.
+
+![](.github/debug_tbn.png)
