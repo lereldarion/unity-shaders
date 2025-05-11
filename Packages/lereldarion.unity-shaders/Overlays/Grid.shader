@@ -73,7 +73,7 @@ Shader "Lereldarion/Overlay/Grid" {
                         float2 quad[4] = { float2(-1, -1), float2(-1, 1), float2(1, -1), float2(1, 1) };
                         float near_plane_z = -_ProjectionParams.y;
                         float2 tan_half_fov = 1 / unity_CameraProjection._m00_m11; // https://jsantell.com/3d-projection/
-                        // Add margins, mostly in case of oblique P matrices or similar
+                        // Add margins in case the matrix has some rotation/skew
                         float quad_z = near_plane_z * 2; // z margin
                         float quad_xy = quad_z * tan_half_fov * 1.2; // xy margin
 
@@ -106,8 +106,6 @@ Shader "Lereldarion/Overlay/Grid" {
                     o.pixel = input.position.xy;
                     o.ray_vs = input.position_vs / input.position.w;
                     // Use derivatives to get ray for neighbouring pixels.
-                    // This is exact because ray is linear on a fragment.
-                    // TODO improve by using ddx/ddy on separate position_vs / position.w and then divide ?
                     o.ray_dx_vs = ddx_fine(o.ray_vs);
                     o.ray_dy_vs = ddy_fine(o.ray_vs);
                     return o;

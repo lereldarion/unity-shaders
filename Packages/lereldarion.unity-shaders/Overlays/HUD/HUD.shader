@@ -105,7 +105,7 @@ Shader "Lereldarion/Overlay/HUD" {
                     // o.xy = TransformStereoScreenSpaceTex(o.xy, pos.w);
                     screen_pos.xy = screen_pos.xy * unity_StereoScaleOffset[0].xy + unity_StereoScaleOffset[0].zw * screen_pos.w;
                     #endif
-                    const float depth_texture_value = SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(screen_pos.xy / screen_pos.w, 0, 4 /* mipmap level */));
+                    const float depth_texture_value = SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(screen_pos.xy / screen_pos.w, 0, 4 /* mipmap level = average a little bit */));
                     const float range_ws = LinearEyeDepth(depth_texture_value) / sample_point_cs.w;
 
                     // Pre compute digits to print for range and world position
@@ -173,7 +173,7 @@ Shader "Lereldarion/Overlay/HUD" {
                         float2 quad[4] = { float2(-1, -1), float2(-1, 1), float2(1, -1), float2(1, 1) };
                         float near_plane_z = -_ProjectionParams.y;
                         float2 tan_half_fov = 1 / unity_CameraProjection._m00_m11; // https://jsantell.com/3d-projection/
-                        // Add margins, mostly in case of oblique P matrices or similar
+                        // Add margins in case the matrix has some rotation/skew
                         float quad_z = near_plane_z * 2; // z margin
                         float quad_xy = quad_z * tan_half_fov * 1.2; // xy margin
 
