@@ -3,10 +3,11 @@
 
 // Debug view for lighting metadata by generating 3D gizmos.
 // Supported :
-// - Dynamic lights : Directional, Point (pixel or vertex)
-// - Reflection probes : solid boundary boxes, and dashed lines towards probe position. White for primary / grey for secondary.
+// - Dynamic lights : Directional, Point (pixel or vertex), Spotlight cone
+// - Reflection probes : solid boundary boxes, and dashed lines towards probe position. White/grey depending on blending.
 // - Displays REDSIM VRC Light Volumes as dashed boxes. Dash count is the resolution.
 // - LTCGI surfaces as colored quads.
+// TODO REDSIM volume lights when stabilised
 // Not supported : Light Probe Proxy Volume ; this is a volume attached to a renderer that will provide the renderer with per-pixel light probes, so useless on avatars.
 
 Shader "Lereldarion/Debug/Lighting" {
@@ -33,11 +34,11 @@ Shader "Lereldarion/Debug/Lighting" {
 
         // Structs
 
-        struct VertexInput {
+        struct MeshData {
             UNITY_VERTEX_INPUT_INSTANCE_ID
         };
         
-        struct FragmentInput {
+        struct LinePoint {
             float4 position : SV_POSITION;
             half3 line_color : LINE_COLOR;
             float dash : DASH;
@@ -105,14 +106,6 @@ Shader "Lereldarion/Debug/Lighting" {
             float invDet=rcp(dot(M[0].xyzw,float4(adjM0.x,adjM1.x,adjM2.x,adjM3.x)));
             return transpose(float4x4(adjM0*invDet,adjM1*invDet,adjM2*invDet,adjM3*invDet));
         }
-        float3x3 inverse(float3x3 mat) {
-            return (float3x3) inverse(float4x4(
-                float4(mat[0], 0),
-                float4(mat[1], 0),
-                float4(mat[2], 0),
-                float4(0, 0, 0, 1)
-            ));
-        }
 
         float3 centered_camera_ws() {
             #if defined(USING_STEREO_MATRICES)
@@ -130,7 +123,7 @@ Shader "Lereldarion/Debug/Lighting" {
         // Drawing
 
         struct LineDrawer {
-            FragmentInput output;
+            LinePoint output;
 
             static LineDrawer init(half3 color) {
                 LineDrawer drawer;
@@ -140,35 +133,35 @@ Shader "Lereldarion/Debug/Lighting" {
                 return drawer;
             }
 
-            void init_cs(inout LineStream<FragmentInput> stream, float4 position_cs) {
+            void init_cs(inout LineStream<LinePoint> stream, float4 position_cs) {
                 output.dash = 0;
                 output.position = position_cs;
                 stream.RestartStrip();
                 stream.Append(output);
             }
-            void init_ws(inout LineStream<FragmentInput> stream, float3 position_ws) {
+            void init_ws(inout LineStream<LinePoint> stream, float3 position_ws) {
                 init_cs(stream, UnityWorldToClipPos(position_ws));
             }
 
-            void solid_cs(inout LineStream<FragmentInput> stream, float4 position_cs) {
+            void solid_cs(inout LineStream<LinePoint> stream, float4 position_cs) {
                 output.position = position_cs;
                 stream.Append(output);
             }
-            void solid_ws(inout LineStream<FragmentInput> stream, float3 position_ws) {
+            void solid_ws(inout LineStream<LinePoint> stream, float3 position_ws) {
                 solid_cs(stream, UnityWorldToClipPos(position_ws));
             }
 
-            void dashed_cs(inout LineStream<FragmentInput> stream, float4 position_cs, float dashes) {
+            void dashed_cs(inout LineStream<LinePoint> stream, float4 position_cs, float dashes) {
                 output.dash += dashes;
                 output.position = position_cs;
                 stream.Append(output);
             }
-            void dashed_ws(inout LineStream<FragmentInput> stream, float3 position_ws, float dashes) {
+            void dashed_ws(inout LineStream<LinePoint> stream, float3 position_ws, float dashes) {
                 dashed_cs(stream, UnityWorldToClipPos(position_ws), dashes);
             }
         };
 
-        void directional_light(inout LineStream<FragmentInput> s, half3 color, float3 light_forward_ws) {
+        void directional_light(inout LineStream<LinePoint> s, half3 color, float3 light_forward_ws) {
             LineDrawer drawer = LineDrawer::init(color); // 10 calls
             float3x3 referential = referential_from_z(light_forward_ws);
 
@@ -189,13 +182,13 @@ Shader "Lereldarion/Debug/Lighting" {
             drawer.init_cs(s, origin_cs); drawer.solid_cs(s, tetrahedron_c); drawer.solid_cs(s, tetrahedron_a);
         }
 
-        void point_light(inout LineStream<FragmentInput> s, half3 color, float3 pos) {
+        void point_light(inout LineStream<LinePoint> s, half3 color, float3 pos) {
             LineDrawer drawer = LineDrawer::init(color); // 16 calls
             float3 ray_to_camera = centered_camera_ws() - pos;
             float3x3 referential = referential_from_z(ray_to_camera);
 
             // 8 spokes
-            float size = 0.025;
+            float size = 0.05;
             [unroll]
             for(uint i = 0; i < 8; i += 1) {
                 float3 spoke_ray = float3(0, 0, 0);
@@ -204,13 +197,13 @@ Shader "Lereldarion/Debug/Lighting" {
             }
         }
 
-        void vertex_point_light(inout LineStream<FragmentInput> s, half3 color, float3 pos) {
+        void vertex_point_light(inout LineStream<LinePoint> s, half3 color, float3 pos) {
             LineDrawer drawer = LineDrawer::init(color); // 16 calls
             float3 ray_to_camera = centered_camera_ws() - pos;
             float3x3 referential = referential_from_z(ray_to_camera);
 
             // 8 spokes with 2 upper ones forming a V for vertex
-            float size = 0.025;
+            float size = 0.05;
             [unroll]
             for(uint i = 0; i < 8; i += 1) {
                 float3 spoke_ray = float3(0, 0, 0);
@@ -220,19 +213,49 @@ Shader "Lereldarion/Debug/Lighting" {
             }
         }
 
-        void spot_light(inout LineStream<FragmentInput> s, half3 color, float3 pos, float4x4 world_to_light) {
-            LineDrawer drawer = LineDrawer::init(color);
+        void spot_light(inout LineStream<LinePoint> s, half3 color, float3 pos, float4x4 world_to_light) {
+            LineDrawer drawer = LineDrawer::init(color); // 20 vertexcount
 
-            float3x3 light_to_world = inverse((float3x3) world_to_light);
+            // W2L * (W.xyz, 1) = L.xyzw
+            // From AutoLight.cginc : the light cone is defined by uv.xy=L.xy/L.w in [-0.5, 0.5] and L.z in [0, 1]
+            // W2L.012 * W.xyz = (uv.xy * L.w, L.zw) - W2L.3 = L.w * (uv.xy, 0, 1) + (0, 0, L.z, 0) - W2L.3
+            // [W2L.012|(-uv.xy, 0, -1)] * (W.xyz, L.w) = (0, 0, L.z, 0) - W2L.3
+            const float4 w2l_3 = world_to_light._m03_m13_m23_m33;
 
-            float f = - world_to_light[3][2]; // FIXME correct transform
-            drawer.init_ws(s, pos); drawer.solid_ws(s, pos + mul(light_to_world, float3(0, 0, 1)));
-            drawer.init_ws(s, pos); drawer.solid_ws(s, pos + mul(light_to_world, float3(0.5 * f, 0, 1)));
-            drawer.init_ws(s, pos); drawer.solid_ws(s, pos + mul(light_to_world, float3(0, 0.5 * f, 1)));
+            // L = (0, 0, 1)
+            world_to_light._m03_m13_m23_m33 = float4(0, 0, 0, -1);
+            float3 L001_ws = mul(inverse(world_to_light), float4(0, 0, 1, 0) - w2l_3).xyz;
+            // +x : L = (0.5, 0, 1)
+            world_to_light._m03_m13_m23_m33 = float4(0.5, 0, 0, -1);
+            float3 Lx_ws = mul(inverse(world_to_light), float4(0, 0, 1, 0) - w2l_3).xyz - L001_ws;
+            // +y : L = (0, 0.5, 1)
+            world_to_light._m03_m13_m23_m33 = float4(0, 0.5, 0, -1);
+            float3 Ly_ws = mul(inverse(world_to_light), float4(0, 0, 1, 0) - w2l_3).xyz - L001_ws;
+
+            // Cone
+            float4 cone_point_cs = UnityWorldToClipPos(pos);
+            float4 cone_base_cs[8];
+            [unroll]
+            for(uint i = 0; i < 8; i += 1) {
+                float2 scale;
+                sincos(i * UNITY_TWO_PI / 8, scale.x, scale.y);
+                cone_base_cs[i] = UnityWorldToClipPos(L001_ws + scale.x * Lx_ws + scale.y * Ly_ws);
+            }
+            for(i = 0; i < 8; i += 2) {
+                drawer.init_cs(s, cone_base_cs[i + 1]); drawer.solid_cs(s, cone_base_cs[i]);
+                drawer.solid_cs(s, cone_point_cs); drawer.solid_cs(s, cone_base_cs[i + 1]);
+                drawer.solid_cs(s, cone_base_cs[(i + 2) % 8]);
+            }
         }
 
-        void reflexion_box(inout LineStream<FragmentInput> s, half3 color, float3 position_ws, float3 bbox_min, float3 bbox_max) {
+        void reflexion_box(inout LineStream<LinePoint> s, half3 color, float3 position_ws, float3 bbox_min, float3 bbox_max) {
             LineDrawer drawer = LineDrawer::init(color); // 21 calls
+            // With no defined reflection boxes, unity will use the skybox with infinite bounding boxes.
+            bool is_skybox = any(!isfinite(bbox_min));
+            if(is_skybox) {
+                bbox_min = position_ws - _Distance_Limit;
+                bbox_max = position_ws + _Distance_Limit;
+            }
             // Precompute center and 8 corners (x = +1, y = +2, z = +4)
             float4 center = UnityWorldToClipPos(position_ws);
             float dashes[8];
@@ -242,12 +265,21 @@ Shader "Lereldarion/Debug/Lighting" {
                 dashes[i] = 10 * round(distance(corner, position_ws));
                 corners[i] = UnityWorldToClipPos(corner);
             }
-            // Draw cube and lines from corner to center. In one big line.
-            drawer.init_cs(s, center);
-            drawer.dashed_cs(s, corners[0], dashes[0]); drawer.solid_cs(s, corners[1]); drawer.solid_cs(s, corners[5]); drawer.solid_cs(s, corners[4]); drawer.dashed_cs(s, center, dashes[4]);
-            drawer.dashed_cs(s, corners[1], dashes[1]); drawer.solid_cs(s, corners[3]); drawer.solid_cs(s, corners[7]); drawer.solid_cs(s, corners[5]); drawer.dashed_cs(s, center, dashes[5]);
-            drawer.dashed_cs(s, corners[3], dashes[3]); drawer.solid_cs(s, corners[2]); drawer.solid_cs(s, corners[6]); drawer.solid_cs(s, corners[7]); drawer.dashed_cs(s, center, dashes[7]);
-            drawer.dashed_cs(s, corners[2], dashes[2]); drawer.solid_cs(s, corners[0]); drawer.solid_cs(s, corners[4]); drawer.solid_cs(s, corners[6]); drawer.dashed_cs(s, center, dashes[6]);
+            // Drawing
+            if(!is_skybox) {
+                // Draw cube and lines from corner to center. In one big line.
+                drawer.init_cs(s, center);
+                drawer.dashed_cs(s, corners[0], dashes[0]); drawer.solid_cs(s, corners[1]); drawer.solid_cs(s, corners[5]); drawer.solid_cs(s, corners[4]); drawer.dashed_cs(s, center, dashes[4]);
+                drawer.dashed_cs(s, corners[1], dashes[1]); drawer.solid_cs(s, corners[3]); drawer.solid_cs(s, corners[7]); drawer.solid_cs(s, corners[5]); drawer.dashed_cs(s, center, dashes[5]);
+                drawer.dashed_cs(s, corners[3], dashes[3]); drawer.solid_cs(s, corners[2]); drawer.solid_cs(s, corners[6]); drawer.solid_cs(s, corners[7]); drawer.dashed_cs(s, center, dashes[7]);
+                drawer.dashed_cs(s, corners[2], dashes[2]); drawer.solid_cs(s, corners[0]); drawer.solid_cs(s, corners[4]); drawer.solid_cs(s, corners[6]); drawer.dashed_cs(s, center, dashes[6]);
+            } else {
+                // Just draw corner-center lines
+                drawer.init_cs(s, corners[0]); drawer.dashed_cs(s, corners[7], dashes[0] + dashes[7]);
+                drawer.init_cs(s, corners[1]); drawer.dashed_cs(s, corners[6], dashes[1] + dashes[6]);
+                drawer.init_cs(s, corners[2]); drawer.dashed_cs(s, corners[5], dashes[2] + dashes[5]);
+                drawer.init_cs(s, corners[3]); drawer.dashed_cs(s, corners[4], dashes[3] + dashes[4]);
+            }
         }
 
         // VRC Light Volumes https://github.com/REDSIM/VRCLightVolumes/
@@ -257,7 +289,7 @@ Shader "Lereldarion/Debug/Lighting" {
         uniform float4x4 _UdonLightVolumeInvWorldMatrix[32]; // World to Local (-0.5, 0.5) UVW Matrix
         uniform float3 _UdonLightVolumeUvw[192]; // AABB Bounds of islands on the 3D Texture atlas
 
-        void draw_vrc_light_volume(inout LineStream<FragmentInput> s, uint volume_id) {
+        void draw_vrc_light_volume(inout LineStream<LinePoint> s, uint volume_id) {
             if(!((float) volume_id < min(_UdonLightVolumeCount, 32))) { return ; }
 
             // Select a color for the volume ; hue shift gradient from red.
@@ -291,19 +323,30 @@ Shader "Lereldarion/Debug/Lighting" {
 
         uniform uint _Udon_LTCGI_ScreenCount; // Up to 16
         uniform bool _Udon_LTCGI_Mask[16];
-        uniform Texture2D<float4> _Udon_LTCGI_static_uniforms;
+        uniform float4 _Udon_LTCGI_Vertices_0[16];
+        uniform float4 _Udon_LTCGI_Vertices_1[16];
+        uniform float4 _Udon_LTCGI_Vertices_2[16];
+        uniform float4 _Udon_LTCGI_Vertices_3[16];
 
-        void draw_ltcgi_surface(inout LineStream<FragmentInput> s, uint screen_id) {
+        void draw_ltcgi_surface(inout LineStream<LinePoint> s, uint screen_id) {
             if(!(screen_id < min(_Udon_LTCGI_ScreenCount, 16) && !_Udon_LTCGI_Mask[screen_id])) { return; }
 
             // Select a color for the volume ; hue shift gradient from red.
             half3 color = hue_shift_yiq(half3(1, 0, 0), (screen_id * UNITY_TWO_PI) / _Udon_LTCGI_ScreenCount);
-            LineDrawer drawer = LineDrawer::init(color); // 5 calls
+            LineDrawer drawer = LineDrawer::init(color); // 7 calls
 
-            float3 v0 = _Udon_LTCGI_static_uniforms[uint2(0, screen_id)].xyz;
-            float3 v1 = _Udon_LTCGI_static_uniforms[uint2(1, screen_id)].xyz;
-            float3 v2 = _Udon_LTCGI_static_uniforms[uint2(2, screen_id)].xyz;
-            float3 v3 = _Udon_LTCGI_static_uniforms[uint2(3, screen_id)].xyz;
+            float3 v0 = _Udon_LTCGI_Vertices_0[screen_id].xyz;
+            float3 v1 = _Udon_LTCGI_Vertices_1[screen_id].xyz;
+            float3 v2 = _Udon_LTCGI_Vertices_2[screen_id].xyz;
+            float3 v3 = _Udon_LTCGI_Vertices_3[screen_id].xyz;
+
+            // Alternate way to get positions. Both works.
+            // Rotating screens on Pi's map are stuck not rotating in both modes...
+            // uniform Texture2D<float4> _Udon_LTCGI_static_uniforms;
+            // float3 v0 = _Udon_LTCGI_static_uniforms[uint2(0, screen_id)].xyz;
+            // float3 v1 = _Udon_LTCGI_static_uniforms[uint2(1, screen_id)].xyz;
+            // float3 v2 = _Udon_LTCGI_static_uniforms[uint2(2, screen_id)].xyz;
+            // float3 v3 = _Udon_LTCGI_static_uniforms[uint2(3, screen_id)].xyz;
 
             float3 center = (v0 + v1 + v2 + v3) / 4;
             float3 normal = normalize(cross(v1 - v0, v2 - v0)) * -1; // -1 = cross is defined for vector from geom to screen
@@ -314,11 +357,11 @@ Shader "Lereldarion/Debug/Lighting" {
 
         // Stages
 
-        void vertex_stage (VertexInput input, out VertexInput output) {
+        void vertex_stage (MeshData input, out MeshData output) {
             output = input;
         }
 
-        half4 fragment_stage_visible (FragmentInput input) : SV_Target {
+        half4 fragment_stage_visible (LinePoint input) : SV_Target {
             UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
 
             // Dashing : line and voids of length 1 along dash_counter
@@ -327,7 +370,7 @@ Shader "Lereldarion/Debug/Lighting" {
 
             return half4(input.line_color, 1);
         }
-        half4 fragment_stage_occluded (FragmentInput input) : SV_Target {
+        half4 fragment_stage_occluded (LinePoint input) : SV_Target {
             UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
 
             // Dashing : line and voids of length 1 along dash_counter
@@ -339,7 +382,7 @@ Shader "Lereldarion/Debug/Lighting" {
 
         [instance(32)]
         [maxvertexcount(41)]
-        void geometry_stage_base(point VertexInput input[1], uint primitive_id : SV_PrimitiveID, uint instance : SV_GSInstanceID, inout LineStream<FragmentInput> stream) {
+        void geometry_stage_base(point MeshData input[1], uint primitive_id : SV_PrimitiveID, uint instance : SV_GSInstanceID, inout LineStream<LinePoint> stream) {
             UNITY_SETUP_INSTANCE_ID(input[0]);
 
             if (!(_VRChatMirrorMode == 0 && primitive_id == 0 && distance_threshold())) { return; }
@@ -353,10 +396,9 @@ Shader "Lereldarion/Debug/Lighting" {
             switch (instance) {
                 case 31: {
                     // Main directional light, which may be disabled
-                    half3 color = _LightColor0.rgb;
                     float3 light_forward_ws = -_WorldSpaceLightPos0.xyz;
-                    if(_WorldSpaceLightPos0.w == 0 && length_sq(light_forward_ws) > 0) {
-                        directional_light(stream, color, light_forward_ws);
+                    if(length_sq(light_forward_ws) > 0) {
+                        directional_light(stream, _LightColor0.rgb, light_forward_ws);
                     }
                     break;
                 }
@@ -391,8 +433,8 @@ Shader "Lereldarion/Debug/Lighting" {
             }
         }
 
-        [maxvertexcount(16)]
-        void geometry_stage_add(point VertexInput input[1], uint primitive_id : SV_PrimitiveID, inout LineStream<FragmentInput> stream) {
+        [maxvertexcount(20)]
+        void geometry_stage_add(point MeshData input[1], uint primitive_id : SV_PrimitiveID, inout LineStream<LinePoint> stream) {
             UNITY_SETUP_INSTANCE_ID(input[0]);
 
             if (!(_VRChatMirrorMode == 0 && primitive_id == 0 && distance_threshold())) { return; }
