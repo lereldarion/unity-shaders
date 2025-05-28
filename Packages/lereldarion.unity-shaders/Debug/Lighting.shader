@@ -501,8 +501,8 @@ Shader "Lereldarion/Debug/Lighting" {
             float3 normal = normalize(sphere.normal);
             switch(sphere.mode) {
                 case 0: return half4(ShadeSH9(float4(normal, 1)), 1);
-                case 1: return half4(DecodeHDR(UNITY_SAMPLE_TEXCUBE(unity_SpecCube0, normal), unity_SpecCube0_HDR), 1);
-                case 2: return half4(DecodeHDR(UNITY_SAMPLE_TEXCUBE_SAMPLER(unity_SpecCube1, unity_SpecCube0, normal), unity_SpecCube1_HDR), 1);
+                case 1: return half4(DecodeHDR(UNITY_SAMPLE_TEXCUBE_LOD(unity_SpecCube0, normal, 0), unity_SpecCube0_HDR), 1);
+                case 2: return half4(DecodeHDR(UNITY_SAMPLE_TEXCUBE_SAMPLER_LOD(unity_SpecCube1, unity_SpecCube0, normal, 0), unity_SpecCube1_HDR), 1);
                 default: return half4(0, 0, 0, 1);
             }
         }
