@@ -4,7 +4,8 @@
 // Debug view for lighting metadata by generating 3D gizmos.
 // Supported :
 // - Dynamic lights : Directional, Point (pixel or vertex), Spotlight cone
-// - Reflection probes : solid boundary boxes, and dashed lines towards probe position. White/grey depending on blending.
+// - Light probes : indirect diffuse on a sphere.
+// - Reflection probes : solid boundary boxes, and dashed lines towards probe position. White/grey depending on blending. Texture value on a sphere.
 // - Displays REDSIM VRC Light Volumes as dashed boxes. Dash count is the resolution.
 // - LTCGI surfaces as colored quads.
 // TODO REDSIM volume lights when stabilised
@@ -12,7 +13,9 @@
 
 Shader "Lereldarion/Debug/Lighting" {
     Properties {
-        _Distance_Limit ("Enable the debug view only if distance object-camera is lower than this threshold", Float) = 15
+        _Distance_Limit ("Enable the debug view only if distance object-camera is lower than this threshold", Float) = 10
+        _LightProbe_Radius ("Light Probe sphere radius", Float) = 0.05
+        _ReflectionProbe_Radius ("Reflection Probe sphere radius", Float) = 0.2
     }
     SubShader {
         Tags {
@@ -31,6 +34,8 @@ Shader "Lereldarion/Debug/Lighting" {
 
         uniform float _VRChatMirrorMode;
         uniform float _Distance_Limit;
+        uniform float _LightProbe_Radius;
+        uniform float _ReflectionProbe_Radius;
 
         // Structs
 
@@ -40,8 +45,15 @@ Shader "Lereldarion/Debug/Lighting" {
         
         struct LinePoint {
             float4 position : SV_POSITION;
-            half3 line_color : LINE_COLOR;
+            half3 color : LINE_COLOR;
             float dash : DASH;
+            UNITY_VERTEX_OUTPUT_STEREO
+        };
+
+        struct Sphere {
+            float4 position : SV_POSITION;
+            float3 normal : NORMAL_WS;
+            nointerpolation uint mode : MODE; // 0 = LightProbe, 1 = SpecCube0, 2 = SpecCube1
             UNITY_VERTEX_OUTPUT_STEREO
         };
 
@@ -115,7 +127,13 @@ Shader "Lereldarion/Debug/Lighting" {
             #endif
         }
 
-        bool distance_threshold() {
+        float3 arbitrary_anchor_point_ws() {
+            // A point in front of the camera to attach items such as directional light vector, lightprobe values...
+            float3 camera_fwd_ws = mul((float3x3) unity_MatrixInvV, float3(0, 0, -1));
+            return centered_camera_ws() + 1.5 * camera_fwd_ws;
+        }
+
+        bool within_distance_limit() {
             float3 object_ws = mul(unity_ObjectToWorld, float4(0, 0, 0, 1)).xyz;
             return length_sq(object_ws - centered_camera_ws()) <= _Distance_Limit * _Distance_Limit;
         }
@@ -128,7 +146,7 @@ Shader "Lereldarion/Debug/Lighting" {
             static LineDrawer init(half3 color) {
                 LineDrawer drawer;
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(drawer.output);
-                drawer.output.line_color = color;
+                drawer.output.color = color;
                 drawer.output.dash = 0;
                 return drawer;
             }
@@ -166,8 +184,7 @@ Shader "Lereldarion/Debug/Lighting" {
             float3x3 referential = referential_from_z(light_forward_ws);
 
             // Line to an arbitrary point in front of the camera (directional lights are infinite)
-            float3 camera_fwd_ws = mul((float3x3) unity_MatrixInvV, float3(0, 0, -1));
-            float3 target = centered_camera_ws() + 1.5 * camera_fwd_ws;
+            float3 target = arbitrary_anchor_point_ws();
             float3 origin = target - 0.5 * referential[2];
             float4 origin_cs = UnityWorldToClipPos(origin);
             drawer.init_ws(s, target); drawer.solid_cs(s, origin_cs);
@@ -248,7 +265,7 @@ Shader "Lereldarion/Debug/Lighting" {
             }
         }
 
-        void reflexion_box(inout LineStream<LinePoint> s, half3 color, float3 position_ws, float3 bbox_min, float3 bbox_max) {
+        void reflexion_probe(inout LineStream<LinePoint> s, half3 color, float3 position_ws, float3 bbox_min, float3 bbox_max) {
             LineDrawer drawer = LineDrawer::init(color); // 21 calls
             // With no defined reflection boxes, unity will use the skybox with infinite bounding boxes.
             bool is_skybox = any(!isfinite(bbox_min));
@@ -355,37 +372,37 @@ Shader "Lereldarion/Debug/Lighting" {
             drawer.init_ws(s, center); drawer.solid_ws(s, center + normal * length(v0 - center)); // Normal vector
         }
 
-        // Stages
+        // Stages for line gizmos
 
         void vertex_stage (MeshData input, out MeshData output) {
             output = input;
         }
 
-        half4 fragment_stage_visible (LinePoint input) : SV_Target {
-            UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
+        half4 fragment_lines_visible (LinePoint line_point) : SV_Target {
+            UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(line_point);
 
             // Dashing : line and voids of length 1 along dash_counter
-            float dash_01 = frac(input.dash * 0.5);
+            float dash_01 = frac(line_point.dash * 0.5);
             if (dash_01 > 0.5 && dash_01 < 0.99) { discard; }
 
-            return half4(input.line_color, 1);
+            return half4(line_point.color, 1);
         }
-        half4 fragment_stage_occluded (LinePoint input) : SV_Target {
-            UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
+        half4 fragment_lines_occluded (LinePoint line_point) : SV_Target {
+            UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(line_point);
 
             // Dashing : line and voids of length 1 along dash_counter
-            float dash_01 = frac(input.dash * 0.5);
+            float dash_01 = frac(line_point.dash * 0.5);
             if (dash_01 > 0.5 && dash_01 < 0.99) { discard; }
 
-            return half4(input.line_color, 0.1);
+            return half4(line_point.color, 0.1);
         }
 
         [instance(32)]
         [maxvertexcount(41)]
-        void geometry_stage_base(point MeshData input[1], uint primitive_id : SV_PrimitiveID, uint instance : SV_GSInstanceID, inout LineStream<LinePoint> stream) {
+        void geometry_lines_base(point MeshData input[1], uint primitive_id : SV_PrimitiveID, uint instance : SV_GSInstanceID, inout LineStream<LinePoint> stream) {
             UNITY_SETUP_INSTANCE_ID(input[0]);
 
-            if (!(_VRChatMirrorMode == 0 && primitive_id == 0 && distance_threshold())) { return; }
+            if (!(_VRChatMirrorMode == 0 && primitive_id == 0 && within_distance_limit())) { return; }
 
             // First try drawing high count items.
             draw_vrc_light_volume(stream, instance); // 32 Volumes, 1 per instance. 20 vertexcount
@@ -403,7 +420,7 @@ Shader "Lereldarion/Debug/Lighting" {
                     break;
                 }
                 case 30: case 29: {
-                    // Reflexion boxes : 21 vertexcount
+                    // Reflexion probes : 21 vertexcount
                     bool is_primary = instance == 30;
                     #if defined(UNITY_SPECCUBE_BLENDING) || defined(FORCE_BOX_PROJECTION)
                     float blend_factor = is_primary ? unity_SpecCube0_BoxMin.w : 1 - unity_SpecCube0_BoxMin.w;
@@ -415,7 +432,7 @@ Shader "Lereldarion/Debug/Lighting" {
                     float3 bbox_max = is_primary ? unity_SpecCube0_BoxMax.xyz : unity_SpecCube1_BoxMax.xyz;
                     bool ignore_secondary = !is_primary && unity_SpecCube0_BoxMin.w >= 0.99999; // Ignore secondary if not used according to blend factor
                     if (blend_factor > 0.00001) {
-                        reflexion_box(stream, blend_factor * half3(1, 1, 1), position, bbox_min, bbox_max);
+                        reflexion_probe(stream, blend_factor * half3(1, 1, 1), position, bbox_min, bbox_max);
                     }
                     break;
                 }
@@ -434,10 +451,10 @@ Shader "Lereldarion/Debug/Lighting" {
         }
 
         [maxvertexcount(20)]
-        void geometry_stage_add(point MeshData input[1], uint primitive_id : SV_PrimitiveID, inout LineStream<LinePoint> stream) {
+        void geometry_lines_add(point MeshData input[1], uint primitive_id : SV_PrimitiveID, inout LineStream<LinePoint> stream) {
             UNITY_SETUP_INSTANCE_ID(input[0]);
 
-            if (!(_VRChatMirrorMode == 0 && primitive_id == 0 && distance_threshold())) { return; }
+            if (!(_VRChatMirrorMode == 0 && primitive_id == 0 && within_distance_limit())) { return; }
 
             #if defined(POINT) || defined(POINT_COOKIE)
             point_light(stream, _LightColor0.rgb, _WorldSpaceLightPos0.xyz);
@@ -448,64 +465,133 @@ Shader "Lereldarion/Debug/Lighting" {
             #endif
         }
 
+        // Sphere functions
+
+        static const uint sphere_subdivision = 4;
+
+        void draw_sphere_patch(inout TriangleStream<Sphere> stream, uint mode, uint id, float3 center, float radius) {
+            // 6 faces, 4 strips of 4 quads for a cube-topology sphere.
+            uint face_id = id / sphere_subdivision; // [0, 6[
+            uint main_axis_id = face_id >= 3 ? face_id - 3 : face_id; // 0,1,2
+            float strip_id = id - sphere_subdivision * face_id; // [0, subdiv[
+            // Select axis for the face construction. normal is always active, and uv go from [-1, 1]
+            float3 normal = main_axis_id == uint3(0, 1, 2) ? (face_id >= 3 ? -1 : 1) : 0; // 6 orientations
+            float3 axis_u = main_axis_id == uint3(2, 0, 1) ? 1 : 0; // Any other axis
+            float3 axis_v = cross(normal, axis_u); // Last vector, use cross for consistent triangle winding
+            // Strip along v
+            float3 a_u_normal_components = normal + lerp(-axis_u, axis_u, strip_id / float(sphere_subdivision));
+            float3 b_u_normal_components = normal + lerp(-axis_u, axis_u, (strip_id + 1) / float(sphere_subdivision));
+            Sphere sphere;
+            UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(sphere);
+            sphere.mode = mode;
+            stream.RestartStrip();
+            for(uint i = 0; i <= sphere_subdivision; i += 1) {
+                float3 v_component = lerp(-axis_v, axis_v, i / float(sphere_subdivision));
+                sphere.normal = normalize(a_u_normal_components + v_component) * radius;
+                sphere.position = UnityWorldToClipPos(center + sphere.normal);
+                stream.Append(sphere);
+                sphere.normal = normalize(b_u_normal_components + v_component) * radius;
+                sphere.position = UnityWorldToClipPos(center + sphere.normal);
+                stream.Append(sphere);
+            }
+        }
+
+        half4 fragment_sphere (Sphere sphere) : SV_Target {
+            UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(sphere);
+            float3 normal = normalize(sphere.normal);
+            switch(sphere.mode) {
+                case 0: return half4(ShadeSH9(float4(normal, 1)), 1);
+                case 1: return half4(DecodeHDR(UNITY_SAMPLE_TEXCUBE(unity_SpecCube0, normal), unity_SpecCube0_HDR), 1);
+                case 2: return half4(DecodeHDR(UNITY_SAMPLE_TEXCUBE_SAMPLER(unity_SpecCube1, unity_SpecCube0, normal), unity_SpecCube1_HDR), 1);
+                default: return half4(0, 0, 0, 1);
+            }
+        }
+
+        [instance(6 * sphere_subdivision)]
+        [maxvertexcount((sphere_subdivision + 1) * 2 * 3)]
+        void geometry_spheres(point MeshData input[1], uint primitive_id : SV_PrimitiveID, uint instance : SV_GSInstanceID, inout TriangleStream<Sphere> stream) {
+            UNITY_SETUP_INSTANCE_ID(input[0]);
+
+            if (!(_VRChatMirrorMode == 0 && primitive_id == 0 && within_distance_limit())) { return; }
+
+            draw_sphere_patch(stream, 0, instance, arbitrary_anchor_point_ws(), _LightProbe_Radius); // Light Probe
+            draw_sphere_patch(stream, 1, instance, unity_SpecCube0_ProbePosition, _ReflectionProbe_Radius);
+            #if defined(UNITY_SPECCUBE_BLENDING) || defined(FORCE_BOX_PROJECTION)
+            if (unity_SpecCube0_BoxMin.w < 0.99999) {
+                draw_sphere_patch(stream, 2, instance, unity_SpecCube1_ProbePosition, _ReflectionProbe_Radius);
+            }
+            #endif
+        }
+
         ENDCG
 
         Pass {
-            Name "Base Lighting Visible"
+            Name "Base Lighting Visible Lines"
             Tags { "LightMode" = "ForwardBase" }
 
-            Cull Off
             ZTest LEqual
 
             CGPROGRAM
             #pragma vertex vertex_stage
-            #pragma geometry geometry_stage_base
-            #pragma fragment fragment_stage_visible
+            #pragma geometry geometry_lines_base
+            #pragma fragment fragment_lines_visible
             #pragma multi_compile_instancing
             ENDCG
         }
         Pass {
-            Name "Base Lighting Occluded"
-            Tags { "LightMode" = "ForwardBase" }
-
-            Cull Off
-            ZTest Greater
-            Blend SrcAlpha OneMinusSrcAlpha
-
-            CGPROGRAM
-            #pragma vertex vertex_stage
-            #pragma geometry geometry_stage_base
-            #pragma fragment fragment_stage_occluded
-            #pragma multi_compile_instancing
-            ENDCG
-        }
-        Pass {
-            Name "Additive Lighting Visible"
+            Name "Additive Lighting Visible Lines"
             Tags { "LightMode" = "ForwardAdd" }
 
-            Cull Off
             ZTest LEqual
 
             CGPROGRAM
             #pragma vertex vertex_stage
-            #pragma geometry geometry_stage_add
-            #pragma fragment fragment_stage_visible
+            #pragma geometry geometry_lines_add
+            #pragma fragment fragment_lines_visible
             #pragma multi_compile_instancing
             #pragma multi_compile_fwdadd
             ENDCG
         }
         Pass {
-            Name "Additive Lighting Occluded"
-            Tags { "LightMode" = "ForwardAdd" }
+            Name "Base Lighting Spheres"
+            Tags { "LightMode" = "ForwardBase" }
 
-            Cull Off
-            ZTest Greater
-            Blend SrcAlpha OneMinusSrcAlpha
+            ZTest LEqual
 
             CGPROGRAM
             #pragma vertex vertex_stage
-            #pragma geometry geometry_stage_add
-            #pragma fragment fragment_stage_occluded
+            #pragma geometry geometry_spheres
+            #pragma fragment fragment_sphere
+            #pragma multi_compile_instancing
+            ENDCG
+        }
+        Pass {
+            Name "Base Lighting Occluded Lines"
+            Tags { "LightMode" = "ForwardBase" }
+
+            ZTest Greater
+            Blend SrcAlpha OneMinusSrcAlpha
+            ZWrite Off
+
+            CGPROGRAM
+            #pragma vertex vertex_stage
+            #pragma geometry geometry_lines_base
+            #pragma fragment fragment_lines_occluded
+            #pragma multi_compile_instancing
+            ENDCG
+        }
+        Pass {
+            Name "Additive Lighting Occluded Lines"
+            Tags { "LightMode" = "ForwardAdd" }
+
+            ZTest Greater
+            Blend SrcAlpha OneMinusSrcAlpha
+            ZWrite Off
+
+            CGPROGRAM
+            #pragma vertex vertex_stage
+            #pragma geometry geometry_lines_add
+            #pragma fragment fragment_lines_occluded
             #pragma multi_compile_instancing
             #pragma multi_compile_fwdadd
             ENDCG
