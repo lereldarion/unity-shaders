@@ -65,12 +65,22 @@ This shader requires a texture for the digits, but due to the SDF strategy it on
 
 ![](.github/overlay_hud.jpg)
 
-## Hidden
-Material that does not render the triangles.
+## Debug Lighting
+Apply to any mesh (only 1 vertex required), and it will display lighting configuration elements that touch the mesh renderer as gizmos in the world :
+- Realtime lights : pixel directional / point / spot lights, and vertex lights, colored by the light color.
+- Reflection probes : displays the bounding boxes and their center, with a sphere to show the cubemap. Color of the lines shows the blend factor when 2 probes are active.
+- Light probes : sphere with lighting values applied to it. Positions are not available in the shader so they cannot be displayed.
+- [LTCGI](https://github.com/PiMaker/ltcgi) : colored rectangles + normal direction, with color hue depending on LTCGI surface indexing to distinguish them.
+- [Light Volumes](https://github.com/REDSIM/VRCLightVolumes) : volume bounding boxes, using dashed lines (dash count is texture resolution) and color hue to represent indexes.
 
-This is useful to fill material slots that cannot be disabled by animators on avatars (skinned mesh slots).
+![](.github/debug_lighting.png)
 
 ## Debug TBN
 Applied to mesh, this shaders displays the tangent space at each vertex as small 3D lines.
 
 ![](.github/debug_tbn.png)
+
+## Hidden
+Material that does not render the triangles.
+
+This is useful to fill material slots that cannot be disabled by animators on avatars (skinned mesh slots).

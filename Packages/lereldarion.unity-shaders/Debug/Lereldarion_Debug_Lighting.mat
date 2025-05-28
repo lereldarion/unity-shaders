@@ -7,8 +7,8 @@ Material:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: Lereldarion_Hidden
-  m_Shader: {fileID: 4800000, guid: ab1ca7db4f2492446a2f891558859542, type: 3}
+  m_Name: Lereldarion_Debug_Lighting
+  m_Shader: {fileID: 4800000, guid: f300bb2b0a90944458e6b001dcd5e736, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
   m_ValidKeywords: []
@@ -24,6 +24,9 @@ Material:
     serializedVersion: 3
     m_TexEnvs: []
     m_Ints: []
-    m_Floats: []
+    m_Floats:
+    - _Distance_Limit: 10
+    - _LightProbe_Radius: 0.05
+    - _ReflectionProbe_Radius: 0.2
     m_Colors: []
   m_BuildTextureStacks: []
