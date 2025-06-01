@@ -428,7 +428,6 @@ Shader "Lereldarion/Debug/Lighting" {
                     float3 position = is_primary ? unity_SpecCube0_ProbePosition.xyz : unity_SpecCube1_ProbePosition.xyz;
                     float3 bbox_min = is_primary ? unity_SpecCube0_BoxMin.xyz : unity_SpecCube1_BoxMin.xyz;
                     float3 bbox_max = is_primary ? unity_SpecCube0_BoxMax.xyz : unity_SpecCube1_BoxMax.xyz;
-                    bool ignore_secondary = !is_primary && unity_SpecCube0_BoxMin.w >= 0.99999; // Ignore secondary if not used according to blend factor
                     if (blend_factor > 0.00001) {
                         reflexion_probe(stream, blend_factor * half3(1, 1, 1), position, bbox_min, bbox_max);
                     }
@@ -438,7 +437,7 @@ Shader "Lereldarion/Debug/Lighting" {
                     // 4 Vertex point lights : 16 vertexcount
                     uint vertex_light_id = 28 - instance;
                     half3 color = unity_LightColor[vertex_light_id].rgb;
-                    if(length_sq(color) > 0) {
+                    if(any(color > 0)) {
                         float3 position = float3(unity_4LightPosX0[vertex_light_id], unity_4LightPosY0[vertex_light_id], unity_4LightPosZ0[vertex_light_id]);
                         vertex_point_light(stream, color, position);
                     }
