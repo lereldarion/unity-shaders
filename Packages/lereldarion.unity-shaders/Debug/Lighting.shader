@@ -59,6 +59,12 @@ Shader "Lereldarion/Debug/Lighting" {
 
         // Utils
 
+        #if defined(USING_STEREO_MATRICES)
+        static float3 centered_camera_ws = (unity_StereoWorldSpaceCameraPos[0] + unity_StereoWorldSpaceCameraPos[1]) / 2;
+        #else
+        static float3 centered_camera_ws = _WorldSpaceCameraPos.xyz;
+        #endif
+
         float length_sq(float3 v) { return dot(v, v); }
         half length_sq(half3 v) { return dot(v, v); }
 
@@ -119,23 +125,15 @@ Shader "Lereldarion/Debug/Lighting" {
             return transpose(float4x4(adjM0*invDet,adjM1*invDet,adjM2*invDet,adjM3*invDet));
         }
 
-        float3 centered_camera_ws() {
-            #if defined(USING_STEREO_MATRICES)
-                return (unity_StereoWorldSpaceCameraPos[0] + unity_StereoWorldSpaceCameraPos[1]) / 2;
-            #else
-                return _WorldSpaceCameraPos.xyz;
-            #endif
-        }
-
         float3 arbitrary_anchor_point_ws() {
             // A point in front of the camera to attach items such as directional light vector, lightprobe values...
             float3 camera_fwd_ws = mul((float3x3) unity_MatrixInvV, float3(0, 0, -1));
-            return centered_camera_ws() + 1.5 * camera_fwd_ws;
+            return centered_camera_ws + 1.5 * camera_fwd_ws;
         }
 
         bool within_distance_limit() {
             float3 object_ws = mul(unity_ObjectToWorld, float4(0, 0, 0, 1)).xyz;
-            return length_sq(object_ws - centered_camera_ws()) <= _Distance_Limit * _Distance_Limit;
+            return length_sq(object_ws - centered_camera_ws) <= _Distance_Limit * _Distance_Limit;
         }
 
         // Drawing
@@ -201,7 +199,7 @@ Shader "Lereldarion/Debug/Lighting" {
 
         void point_light(inout LineStream<LinePoint> s, half3 color, float3 pos) {
             LineDrawer drawer = LineDrawer::init(color); // 16 calls
-            float3 ray_to_camera = centered_camera_ws() - pos;
+            float3 ray_to_camera = centered_camera_ws - pos;
             float3x3 referential = referential_from_z(ray_to_camera);
 
             // 8 spokes
@@ -216,7 +214,7 @@ Shader "Lereldarion/Debug/Lighting" {
 
         void vertex_point_light(inout LineStream<LinePoint> s, half3 color, float3 pos) {
             LineDrawer drawer = LineDrawer::init(color); // 16 calls
-            float3 ray_to_camera = centered_camera_ws() - pos;
+            float3 ray_to_camera = centered_camera_ws - pos;
             float3x3 referential = referential_from_z(ray_to_camera);
 
             // 8 spokes with 2 upper ones forming a V for vertex
