@@ -5,6 +5,8 @@ Install using VCC at https://lereldarion.github.io/vpm-listing/.
 
 Install from Unity Packages from [releases](https://github.com/lereldarion/unity-shaders/releases).
 
+Shader code is at [Packages/lereldarion.unity-shaders](https://github.com/lereldarion/unity-shaders/tree/main/Packages/lereldarion.unity-shaders) due to the folder structure of the VPM package template.
+
 ## Overlays
 These overlay shaders are useful on avatars for world analysis (wireframe, normals, HUD), or adjusting lighting (GammaAdjust).
 
@@ -70,8 +72,8 @@ Apply to any mesh (only 1 vertex required), and it will display lighting configu
 - Realtime lights : pixel directional / point / spot lights, and vertex lights, colored by the light color.
 - Reflection probes : displays the bounding boxes and their center, with a sphere to show the cubemap. Color of the lines shows the blend factor when 2 probes are active.
 - Light probes : sphere with lighting values applied to it. Positions are not available in the shader so they cannot be displayed.
-- [LTCGI](https://github.com/PiMaker/ltcgi) : colored rectangles + normal direction, with color hue depending on LTCGI surface indexing to distinguish them.
-- [Light Volumes](https://github.com/REDSIM/VRCLightVolumes) : volume bounding boxes, using dashed lines (dash count is texture resolution) and color hue to represent indexes.
+- [LTCGI](https://github.com/PiMaker/ltcgi) v1 : colored rectangles for screen surfaces + normal direction, with color hue depending on LTCGI surface indexing to distinguish them.
+- [Light Volumes](https://github.com/REDSIM/VRCLightVolumes) v1 : volume bounding boxes, using dashed lines (dash count is texture resolution) and color hue to represent indexes.
 
 ![](.github/debug_lighting.png)
 

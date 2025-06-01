@@ -6,9 +6,9 @@
 // - Dynamic lights : Directional, Point (pixel or vertex), Spotlight cone
 // - Light probes : indirect diffuse on a sphere.
 // - Reflection probes : solid boundary boxes, and dashed lines towards probe position. White/grey depending on blending. Texture value on a sphere.
-// - Displays REDSIM VRC Light Volumes as dashed boxes. Dash count is the resolution.
+// - Displays REDSIM VRC Light Volumes (V1.0) as dashed boxes. Dash count is the resolution.
 // - LTCGI surfaces as colored quads.
-// TODO REDSIM volume lights when stabilised
+// TODO REDSIM Light Volumes V2 when stabilised and released (point/spot lights, new metadata format)
 // Not supported : Light Probe Proxy Volume ; this is a volume attached to a renderer that will provide the renderer with per-pixel light probes, so useless on avatars.
 
 Shader "Lereldarion/Debug/Lighting" {
