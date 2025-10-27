@@ -37,6 +37,7 @@ Shader "Lereldarion/Debug/Lighting" {
         uniform float _LightProbe_Radius;
         uniform float _ReflectionProbe_Radius;
 
+        ///////////////////////////////////////////////////////////////////////
         // Structs
 
         struct MeshData {
@@ -57,6 +58,7 @@ Shader "Lereldarion/Debug/Lighting" {
             UNITY_VERTEX_OUTPUT_STEREO
         };
 
+        ///////////////////////////////////////////////////////////////////////
         // Utils
 
         #if defined(USING_STEREO_MATRICES)
@@ -78,6 +80,16 @@ Shader "Lereldarion/Debug/Lighting" {
             }
             float3 y = cross(x, z);
             return float3x3(x, y, z);
+        }
+
+        float3x3 quaternion_to_matrix(float4 q) {
+            float3 a = float3(-1, 1, 1);
+            float3x3 identity = float3x3(1, 0, 0, 0, 1, 0, 0, 0, 1); 
+            float3 u = q.zyz * a * q.w, v = q.xyx * a.xxy * q.w;
+            float3x3 m = float3x3(0, u.x, u.y, u.z, 0, v.x, v.y, v.z, 0) + 0.5 * identity + float3x3(q.xyz * q.x, q.xyz * q.y, q.xyz * q.z) * (1.0 - identity);
+            q *= q;
+            m -= float3x3(q.y + q.z, 0, 0, 0, q.x + q.z, 0, 0, 0, q.x + q.y);
+            return m * 2.0;
         }
 
         // math adapted from https://gist.github.com/mairod/a75e7b44f68110e1576d77419d608786?permalink_comment_id=3180018#gistcomment-3180018
@@ -136,6 +148,7 @@ Shader "Lereldarion/Debug/Lighting" {
             return length_sq(object_ws - centered_camera_ws) <= _Distance_Limit * _Distance_Limit;
         }
 
+        ///////////////////////////////////////////////////////////////////////
         // Drawing
 
         struct LineDrawer {
@@ -149,14 +162,14 @@ Shader "Lereldarion/Debug/Lighting" {
                 return drawer;
             }
 
-            void init_cs(inout LineStream<LinePoint> stream, float4 position_cs) {
-                output.dash = 0;
+            void init_cs(inout LineStream<LinePoint> stream, float4 position_cs, float dash_offset = 0) {
+                output.dash = dash_offset;
                 output.position = position_cs;
                 stream.RestartStrip();
                 stream.Append(output);
             }
-            void init_ws(inout LineStream<LinePoint> stream, float3 position_ws) {
-                init_cs(stream, UnityWorldToClipPos(position_ws));
+            void init_ws(inout LineStream<LinePoint> stream, float3 position_ws, float dash_offset = 0) {
+                init_cs(stream, UnityWorldToClipPos(position_ws), dash_offset);
             }
 
             void solid_cs(inout LineStream<LinePoint> stream, float4 position_cs) {
@@ -176,6 +189,9 @@ Shader "Lereldarion/Debug/Lighting" {
                 dashed_cs(stream, UnityWorldToClipPos(position_ws), dashes);
             }
         };
+
+        ///////////////////////////////////////////////////////////////////////
+        // Builtin renderer lighting
 
         void directional_light(inout LineStream<LinePoint> s, half3 color, float3 light_forward_ws) {
             LineDrawer drawer = LineDrawer::init(color); // 10 calls
@@ -263,7 +279,7 @@ Shader "Lereldarion/Debug/Lighting" {
             }
         }
 
-        void reflexion_probe(inout LineStream<LinePoint> s, half3 color, float3 position_ws, float3 bbox_min, float3 bbox_max) {
+        void reflection_probe(inout LineStream<LinePoint> s, half3 color, float3 position_ws, float3 bbox_min, float3 bbox_max) {
             LineDrawer drawer = LineDrawer::init(color); // 21 calls
             // With no defined reflection boxes, unity will use the skybox with infinite bounding boxes.
             bool is_skybox = any(!isfinite(bbox_min));
@@ -296,21 +312,20 @@ Shader "Lereldarion/Debug/Lighting" {
                 drawer.init_cs(s, corners[3]); drawer.dashed_cs(s, corners[4], dashes[3] + dashes[4]);
             }
         }
-
+        
+        ///////////////////////////////////////////////////////////////////////
         // VRC Light Volumes https://github.com/REDSIM/VRCLightVolumes/
 
-        uniform float _UdonLightVolumeCount; // All volumes count in scene
+        uniform float _UdonLightVolumeCount; // All volumes count in scene, max 32
         uniform Texture3D _UdonLightVolume; // Main 3D Texture atlas
         uniform float4x4 _UdonLightVolumeInvWorldMatrix[32]; // World to Local (-0.5, 0.5) UVW Matrix
-        uniform float3 _UdonLightVolumeUvw[192]; // AABB Bounds of islands on the 3D Texture atlas
+        uniform float3 _UdonLightVolumeUvw[32 * 6]; // AABB Bounds of islands on the 3D Texture atlas
 
-        void draw_vrc_light_volume(inout LineStream<LinePoint> s, uint volume_id) {
-            if(!((float) volume_id < min(_UdonLightVolumeCount, 32))) { return ; }
-
+        void draw_vrc_light_volume_boxes(inout LineStream<LinePoint> s, uint volume_id) {            
             // Select a color for the volume ; hue shift gradient from red.
             half3 color = hue_shift_yiq(half3(1, 0, 0), volume_id / _UdonLightVolumeCount * UNITY_TWO_PI);
             LineDrawer drawer = LineDrawer::init(color); // 20 calls
-
+            
             // Project bounds to CS
             float4x4 volume_to_world = inverse(_UdonLightVolumeInvWorldMatrix[volume_id]);
             float4x4 volume_to_cs = mul(UNITY_MATRIX_VP, volume_to_world);
@@ -319,14 +334,14 @@ Shader "Lereldarion/Debug/Lighting" {
                 float3 corner = i & uint3(1, 2, 4) ? -0.5 : 0.5;
                 corners[i] = mul(volume_to_cs, float4(corner, 1));
             }
-
+            
             // Texel resolution as dash count
             float3 atlas_texels;
             _UdonLightVolume.GetDimensions(atlas_texels.x, atlas_texels.y, atlas_texels.z);
             uint uvwID = volume_id * 6;
             float3 uvw_resolution = _UdonLightVolumeUvw[uvwID + 1].xyz - _UdonLightVolumeUvw[uvwID].xyz;
-            float3 texels = atlas_texels * uvw_resolution;
-
+            float3 texels = atlas_texels * uvw_resolution; // should be integers
+            
             // Draw edges with texel count
             drawer.init_cs(s, corners[0]); drawer.dashed_cs(s, corners[1], texels.x); drawer.dashed_cs(s, corners[5], texels.z); drawer.dashed_cs(s, corners[4], texels.x);
             drawer.init_cs(s, corners[1]); drawer.dashed_cs(s, corners[3], texels.y); drawer.dashed_cs(s, corners[7], texels.z); drawer.dashed_cs(s, corners[5], texels.y);
@@ -334,6 +349,79 @@ Shader "Lereldarion/Debug/Lighting" {
             drawer.init_cs(s, corners[2]); drawer.dashed_cs(s, corners[0], texels.y); drawer.dashed_cs(s, corners[4], texels.z); drawer.dashed_cs(s, corners[6], texels.y);
         }
 
+        uniform float _UdonPointLightVolumeCount; // Point Lights count, max 128
+        uniform float4 _UdonPointLightVolumePosition[128]; // XYZ = Position. W = Inverse squared range (point light) | Inverse squared range, negated (spot light) | Width (area light)
+        uniform float4 _UdonPointLightVolumeColor[128]; // XYZ = Color. W = Cos of angle for LUT (point light) | Cos of outer angle if no custom texture, tan of outer angle otherwise (spot light) | 2 + Height (area light) 
+        uniform float4 _UdonPointLightVolumeDirection[128]; // Rotation quaternion (point light, area light, cookie spot light) | XYZ direction + W cone falloff (analytic spot light)
+        uniform float3 _UdonPointLightVolumeCustomID[128]; // X = 0 if analytic, -cookie_ID, or +custom_lut_ID. Y shadow mask id. Z squared culling distance.
+
+        void draw_vrc_light_volume_light(inout LineStream<LinePoint> s, uint light_id) {
+            const float3 custom_id_data = _UdonPointLightVolumeCustomID[light_id];
+            const float4 position = _UdonPointLightVolumePosition[light_id];
+            const float4 color = _UdonPointLightVolumeColor[light_id];
+            const float4 direction_or_rotation = _UdonPointLightVolumeDirection[light_id];
+            
+            const float culling_distance = sqrt(custom_id_data.z); // generally radius of sphere / spotlight cone
+            float3x3 referential = quaternion_to_matrix(direction_or_rotation);
+
+            float intensity = max(color.r, max(color.g, color.b)); // Fix premultiplication by intensity. Will not retrieve component color, but at least the hue should be ok.
+            LineDrawer drawer = LineDrawer::init(color.rgb / intensity);
+            
+            // Select mode code from LightVolumes.cginc
+            [branch] if(position.w < 0) {
+                // spot light : 6 vertex count
+                float2 sin_cos_size;
+                if(custom_id_data.x >= 0) {
+                    // No cookie. Analytical light with no specific rotation, so align to vertical.
+                    referential = referential_from_z(direction_or_rotation.xyz);
+                    // color.w is cos angle
+                    sin_cos_size = float2(sqrt(1 - color.w * color.w), color.w);
+                } else {
+                    // color.w is tan angle
+                    float cos = 1/sqrt(1 + color.w * color.w);
+                    sin_cos_size = float2(color.w * cos, cos);
+                }
+                sin_cos_size *= culling_distance;
+
+                // Cone with 4 lines, dashed to indicate culling_distance
+                float4 position_cs = UnityWorldToClipPos(position.xyz);
+                drawer.init_ws(s, position.xyz + mul(float3(-sin_cos_size.x, 0, sin_cos_size.y), referential), culling_distance);
+                drawer.dashed_cs(s, position_cs, -culling_distance);
+                drawer.dashed_ws(s, position.xyz + mul(float3(sin_cos_size.x, 0, sin_cos_size.y), referential), culling_distance);
+                drawer.init_ws(s, position.xyz + mul(float3(0, -sin_cos_size.x, sin_cos_size.y), referential), culling_distance);
+                drawer.dashed_cs(s, position_cs, -culling_distance);
+                drawer.dashed_ws(s, position.xyz + mul(float3(0, sin_cos_size.x, sin_cos_size.y), referential), culling_distance);
+            } else if (color.w <= 1.5f) {
+                // point light : 6 vertex count
+                // rotation quaternion is not updated if no cookie, fine by me
+                
+                // axis aligned 3 lines with dashes for culling distance
+                drawer.init_ws(s, position.xyz + mul(float3(-culling_distance, 0, 0), referential), -culling_distance);
+                drawer.dashed_ws(s, position.xyz + mul(float3(culling_distance, 0, 0), referential), 2 * culling_distance);
+                drawer.init_ws(s, position.xyz + mul(float3(0, -culling_distance, 0), referential), -culling_distance);
+                drawer.dashed_ws(s, position.xyz + mul(float3(0, culling_distance, 0), referential), 2 * culling_distance);
+                drawer.init_ws(s, position.xyz + mul(float3(0, 0, -culling_distance), referential), -culling_distance);
+                drawer.dashed_ws(s, position.xyz + mul(float3(0, 0, culling_distance), referential), 2 * culling_distance);
+            } else {
+                // area light : 7 vertex count
+                // For some reason the referential matrix is inverse of the others. Whatever...
+                float2 size = 0.5 * float2(position.w, color.w - 2.0f);
+                
+                // Quad outline
+                const float4 init_position_cs = UnityWorldToClipPos(position.xyz + mul(referential, float3(-size.x, -size.y, 0)));
+                drawer.init_cs(s, init_position_cs);
+                drawer.solid_ws(s, position.xyz + mul(referential, float3(size.x, -size.y, 0)));
+                drawer.solid_ws(s, position.xyz + mul(referential, float3(size.x, size.y, 0)));
+                drawer.solid_ws(s, position.xyz + mul(referential, float3(-size.x, size.y, 0)));
+                drawer.solid_cs(s, init_position_cs);
+
+                // Dashed normal sized to culling_distance
+                drawer.init_ws(s, position.xyz);
+                drawer.dashed_ws(s, position.xyz + mul(referential, float3(0, 0, culling_distance)), culling_distance);
+            }
+        }
+
+        ///////////////////////////////////////////////////////////////////////
         // LTCGI https://github.com/PiMaker/ltcgi/
 
         uniform uint _Udon_LTCGI_ScreenCount; // Up to 16
@@ -370,43 +458,55 @@ Shader "Lereldarion/Debug/Lighting" {
             drawer.init_ws(s, center); drawer.solid_ws(s, center + normal * length(v0 - center)); // Normal vector
         }
 
+        ///////////////////////////////////////////////////////////////////////
         // Stages for line gizmos
 
         void vertex_stage (MeshData input, out MeshData output) {
             output = input;
         }
 
+        void dash_discard(float t) {
+            // Dashing : line and voids of length 1 along dash dimension
+            float dash_01 = frac(abs(t) * 0.5); // abs to allow [-x, x] line to be symmetric
+            if (dash_01 > 0.5 && dash_01 < 0.99) { discard; }
+        }
         half4 fragment_lines_visible (LinePoint line_point) : SV_Target {
             UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(line_point);
-
-            // Dashing : line and voids of length 1 along dash_counter
-            float dash_01 = frac(line_point.dash * 0.5);
-            if (dash_01 > 0.5 && dash_01 < 0.99) { discard; }
-
+            dash_discard(line_point.dash);
             return half4(line_point.color, 1);
         }
         half4 fragment_lines_occluded (LinePoint line_point) : SV_Target {
             UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(line_point);
-
-            // Dashing : line and voids of length 1 along dash_counter
-            float dash_01 = frac(line_point.dash * 0.5);
-            if (dash_01 > 0.5 && dash_01 < 0.99) { discard; }
-
+            dash_discard(line_point.dash);
             return half4(line_point.color, 0.1);
         }
 
         [instance(32)]
-        [maxvertexcount(41)]
+        [maxvertexcount(20 /*lv box*/ + 8 * 7 /*lv lights*/ + 21 /*max(LTCGI, builtin)*/)] // Manually set from logic vertexcounts below
         void geometry_lines_base(point MeshData input[1], uint primitive_id : SV_PrimitiveID, uint instance : SV_GSInstanceID, inout LineStream<LinePoint> stream) {
             UNITY_SETUP_INSTANCE_ID(input[0]);
 
             if (!(_VRChatMirrorMode == 0 && primitive_id == 0 && within_distance_limit())) { return; }
 
-            // First try drawing high count items.
-            draw_vrc_light_volume(stream, instance); // 32 Volumes, 1 per instance. 20 vertexcount
-            draw_ltcgi_surface(stream, instance); // 16 Screens, 1 per instance for first 16. 5 vertexcount
+            // Always try to spread items on all threads if possible
+
+            // LV boxes : 32 Volumes, 1 per instance.
+            if(instance < min((uint) _UdonLightVolumeCount, 32)) {
+                draw_vrc_light_volume_boxes(stream, instance); // 20 vertex count
+            }
+
+            // LV lights : 128 lights, 8 per instances (x32 = 128) by parallel batches of 32.
+            // A batch can have heterogeneous types, but I cannot know their types in advance.
+            uint point_light_volume_count = min((uint) _UdonPointLightVolumeCount, 128);
+            [loop] for(uint light_id = instance; light_id < point_light_volume_count; light_id += 32) {
+                draw_vrc_light_volume_light(stream, light_id); // up to 7 vertex count
+            }
+
+            // 16 Screens, 1 per instance for first 16.
+            draw_ltcgi_surface(stream, instance); // 7 vertex count
 
             // Spread other workload on threads, starting at the end in case volumes are not using all instances.
+            // TODO spread on threads ?
             [forcecase]
             switch (instance) {
                 case 31: {
@@ -418,7 +518,7 @@ Shader "Lereldarion/Debug/Lighting" {
                     break;
                 }
                 case 30: case 29: {
-                    // Reflexion probes : 21 vertexcount
+                    // Reflection probes : 21 vertexcount
                     bool is_primary = instance == 30;
                     #if defined(UNITY_SPECCUBE_BLENDING) || defined(FORCE_BOX_PROJECTION)
                     float blend_factor = is_primary ? unity_SpecCube0_BoxMin.w : 1 - unity_SpecCube0_BoxMin.w;
@@ -429,12 +529,12 @@ Shader "Lereldarion/Debug/Lighting" {
                     float3 bbox_min = is_primary ? unity_SpecCube0_BoxMin.xyz : unity_SpecCube1_BoxMin.xyz;
                     float3 bbox_max = is_primary ? unity_SpecCube0_BoxMax.xyz : unity_SpecCube1_BoxMax.xyz;
                     if (blend_factor > 0.00001) {
-                        reflexion_probe(stream, blend_factor * half3(1, 1, 1), position, bbox_min, bbox_max);
+                        reflection_probe(stream, blend_factor.xxx, position, bbox_min, bbox_max);
                     }
                     break;
                 }
                 case 28: case 27: case 26: case 25: {
-                    // 4 Vertex point lights : 16 vertexcount
+                    // 4 Vertex point lights : 16 vertexcount per instance
                     uint vertex_light_id = 28 - instance;
                     half3 color = unity_LightColor[vertex_light_id].rgb;
                     if(any(color > 0)) {
@@ -450,9 +550,10 @@ Shader "Lereldarion/Debug/Lighting" {
         [maxvertexcount(20)]
         void geometry_lines_add(point MeshData input[1], uint primitive_id : SV_PrimitiveID, inout LineStream<LinePoint> stream) {
             UNITY_SETUP_INSTANCE_ID(input[0]);
-
+            
             if (!(_VRChatMirrorMode == 0 && primitive_id == 0 && within_distance_limit())) { return; }
-
+            
+            // Not worth instancing, too heterogeneous and small
             #if defined(POINT) || defined(POINT_COOKIE)
             point_light(stream, _LightColor0.rgb, _WorldSpaceLightPos0.xyz);
             #elif defined(DIRECTIONAL) || defined(DIRECTIONAL_COOKIE)
@@ -462,7 +563,10 @@ Shader "Lereldarion/Debug/Lighting" {
             #endif
         }
 
+        ///////////////////////////////////////////////////////////////////////
         // Sphere functions
+
+        // TODO light volume light cookies. Have a max budget for triangles, and generate a sphere per point light cookie, a quad per spotlight
 
         static const uint sphere_subdivision = 4;
 
@@ -504,8 +608,8 @@ Shader "Lereldarion/Debug/Lighting" {
             }
         }
 
-        [instance(6 * sphere_subdivision)]
-        [maxvertexcount((sphere_subdivision + 1) * 2 * 3)]
+        [instance(6 /*faces*/ * sphere_subdivision)]
+        [maxvertexcount(((sphere_subdivision + 1) * 2) /*1 strip*/ * 3 /*spheres*/)]
         void geometry_spheres(point MeshData input[1], uint primitive_id : SV_PrimitiveID, uint instance : SV_GSInstanceID, inout TriangleStream<Sphere> stream) {
             UNITY_SETUP_INSTANCE_ID(input[0]);
 
@@ -521,6 +625,9 @@ Shader "Lereldarion/Debug/Lighting" {
         }
 
         ENDCG
+
+        ///////////////////////////////////////////////////////////////////////
+        // Assemble all passes
 
         Pass {
             Name "Base Lighting Visible Lines"
