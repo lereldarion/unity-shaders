@@ -3,9 +3,10 @@
 
 // Debug view for lighting metadata by generating 3D gizmos.
 // 
-// Unity gizmos use solid lines and  :
-// - Directional lights : directional arrow, in front of camera. Color is light color
-// - Point lights : 8 radial spokes at light center. With "V" in the middle if vertex light. Color is light color.
+// Unity gizmos use solid lines :
+// - Directional lights : directional arrow, in front of camera. Color is light color.
+// - Pixel point lights : 14 rays from light center (axis-aligned + diagonals). Color is light color.
+// - Vertex point lights : 6 rays from light center (axis-aligned). Color is light color.
 // - Spot light : cone boundary as octagonal pyramid. Color is light color.
 // - Light probes : indirect diffuse shading on a sphere in front of camera.
 // - Reflection probes : solid boundary boxes, and dashed lines towards probe position. White/grey depending on blending. Raw texture displayed on a sphere.
@@ -16,9 +17,7 @@
 // - Spot light : 4 cone dashed edges. Lines lengths are the culling distance (dash size = 1m). Color is reconstructed hue.
 // - Area light : rectangle with solid edges. Dashed normal vector, length is culling distance (dash size = 1m). Color is reconstructed hue.
 // 
-// LTCGI : surfaces as colored quads bounds, and a normal line iat center. Solid lines. Color is item index.
-// TODO REDSIM Light Volumes V2 when stabilised and released (point/spot lights, new metadata format)
-// Not supported : Light Probe Proxy Volume ; this is a volume attached to a renderer that will provide the renderer with per-pixel light probes, so useless on avatars.
+// LTCGI : emitting surfaces as rectangle edges + diagonals. A normal line at center. Solid lines. Color is item index.
 
 Shader "Lereldarion/Debug/Lighting" {
     Properties {
@@ -222,35 +221,35 @@ Shader "Lereldarion/Debug/Lighting" {
             drawer.init_cs(s, origin_cs); drawer.solid_cs(s, tetrahedron_c); drawer.solid_cs(s, tetrahedron_a);
         }
 
-        void unity_point_light(inout LineStream<LinePoint> s, half3 color, float3 pos) {
-            LineDrawer drawer = LineDrawer::init(color); // 16 calls
-            float3 ray_to_camera = centered_camera_ws - pos;
-            float3x3 referential = referential_from_z(ray_to_camera);
+        void unity_pixel_point_light(inout LineStream<LinePoint> s, half3 color, float3 pos, float4x4 world_to_light) {
+            LineDrawer drawer = LineDrawer::init(color); // 14 calls
+            
+            // Pixel point light : world to light is a nice matrix with rotation + scale + translation.
+            // Only use inverse for scale + rotation, as we have the center separately. Cheaper 70 math vs 78 math.
+            float3x3 light_to_world = (float3x3) inverse(world_to_light);
 
-            // 8 spokes
-            float size = 0.05;
-            [unroll]
-            for(uint i = 0; i < 8; i += 1) {
-                float3 spoke_ray = float3(0, 0, 0);
-                sincos(i * UNITY_TWO_PI / 8, spoke_ray.x, spoke_ray.y);
-                drawer.init_ws(s, pos + mul(size * spoke_ray, referential)); drawer.solid_ws(s, pos + mul(2 * size * spoke_ray, referential));
-            }
+            // Axis aligned rays
+            drawer.init_ws(s, pos + mul(light_to_world, float3(-1,  0,  0))); drawer.solid_ws(s, pos + mul(light_to_world, float3(1, 0, 0)));
+            drawer.init_ws(s, pos + mul(light_to_world, float3( 0, -1,  0))); drawer.solid_ws(s, pos + mul(light_to_world, float3(0, 1, 0)));
+            drawer.init_ws(s, pos + mul(light_to_world, float3( 0,  0, -1))); drawer.solid_ws(s, pos + mul(light_to_world, float3(0, 0, 1)));
+            // Diagonal rays
+            float c = 1. / sqrt(3.);
+            drawer.init_ws(s, pos + mul(light_to_world, float3(-c, -c, -c))); drawer.solid_ws(s, pos + mul(light_to_world, float3( c,  c,  c)));
+            drawer.init_ws(s, pos + mul(light_to_world, float3( c, -c, -c))); drawer.solid_ws(s, pos + mul(light_to_world, float3(-c,  c,  c)));
+            drawer.init_ws(s, pos + mul(light_to_world, float3(-c,  c, -c))); drawer.solid_ws(s, pos + mul(light_to_world, float3( c, -c,  c)));
+            drawer.init_ws(s, pos + mul(light_to_world, float3(-c, -c,  c))); drawer.solid_ws(s, pos + mul(light_to_world, float3( c,  c, -c)));
         }
 
-        void unity_vertex_point_light(inout LineStream<LinePoint> s, half3 color, float3 pos) {
-            LineDrawer drawer = LineDrawer::init(color); // 16 calls
-            float3 ray_to_camera = centered_camera_ws - pos;
-            float3x3 referential = referential_from_z(ray_to_camera);
+        void unity_vertex_point_light(inout LineStream<LinePoint> s, half3 color, float3 pos, float attenuation) {
+            LineDrawer drawer = LineDrawer::init(color); // 6 calls
+            
+            // https://discussions.unity.com/t/point-light-in-v-f-shader/679554/10 Pema
+            float range = 5.0 * rsqrt(attenuation);
 
-            // 8 spokes with 2 upper ones forming a V for vertex
-            float size = 0.05;
-            [unroll]
-            for(uint i = 0; i < 8; i += 1) {
-                float3 spoke_ray = float3(0, 0, 0);
-                sincos(i * UNITY_TWO_PI / 8, spoke_ray.x, spoke_ray.y);
-                bool reach_center = i == 1 || i == 7;
-                drawer.init_ws(s, pos + mul((reach_center ? 0 : size) * spoke_ray, referential)); drawer.solid_ws(s, pos + mul(2 * size * spoke_ray, referential));
-            }
+            // Axis aligned rays only
+            drawer.init_ws(s, pos + float3(-range,  0,  0)); drawer.solid_ws(s, pos + float3(range, 0, 0));
+            drawer.init_ws(s, pos + float3( 0, -range,  0)); drawer.solid_ws(s, pos + float3(0, range, 0));
+            drawer.init_ws(s, pos + float3( 0,  0, -range)); drawer.solid_ws(s, pos + float3(0, 0, range));
         }
 
         void unity_spot_light(inout LineStream<LinePoint> s, half3 color, float3 pos, float4x4 world_to_light) {
@@ -275,8 +274,7 @@ Shader "Lereldarion/Debug/Lighting" {
             // Cone
             float4 cone_point_cs = UnityWorldToClipPos(pos);
             float4 cone_base_cs[8];
-            [unroll]
-            for(uint i = 0; i < 8; i += 1) {
+            [unroll] for(uint i = 0; i < 8; i += 1) {
                 float2 scale;
                 sincos(i * UNITY_TWO_PI / 8, scale.x, scale.y);
                 cone_base_cs[i] = UnityWorldToClipPos(L001_ws + scale.x * Lx_ws + scale.y * Ly_ws);
@@ -445,7 +443,7 @@ Shader "Lereldarion/Debug/Lighting" {
 
             // Select a color for the volume ; hue shift gradient from red.
             half3 color = hue_shift_yiq(half3(1, 0, 0), (screen_id * UNITY_TWO_PI) / _Udon_LTCGI_ScreenCount);
-            LineDrawer drawer = LineDrawer::init(color); // 7 calls
+            LineDrawer drawer = LineDrawer::init(color); // 10 calls
 
             float3 v0 = _Udon_LTCGI_Vertices_0[screen_id].xyz;
             float3 v1 = _Udon_LTCGI_Vertices_1[screen_id].xyz;
@@ -462,8 +460,14 @@ Shader "Lereldarion/Debug/Lighting" {
 
             float3 center = (v0 + v1 + v2 + v3) / 4;
             float3 normal = normalize(cross(v1 - v0, v2 - v0)) * -1; // -1 = cross is defined for vector from geom to screen
+            float4 v0_cs = UnityWorldToClipPos(v0);
+            float4 v1_cs = UnityWorldToClipPos(v1);
+            float4 v2_cs = UnityWorldToClipPos(v2);
+            float4 v3_cs = UnityWorldToClipPos(v3);
 
-            drawer.init_ws(s, v0); drawer.solid_ws(s, v1); drawer.solid_ws(s, v3); drawer.solid_ws(s, v2); drawer.solid_ws(s, v0); 
+            // Rectangle + diagonals
+            drawer.init_cs(s, v0_cs); drawer.solid_cs(s, v1_cs); drawer.solid_cs(s, v2_cs); drawer.solid_cs(s, v3_cs); // N
+            drawer.init_cs(s, v1_cs); drawer.solid_cs(s, v3_cs); drawer.solid_cs(s, v0_cs); drawer.solid_cs(s, v2_cs); // Z
             drawer.init_ws(s, center); drawer.solid_ws(s, center + normal * length(v0 - center)); // Normal vector
         }
 
@@ -501,21 +505,21 @@ Shader "Lereldarion/Debug/Lighting" {
 
             // LV boxes : 32 Volumes, 1 per instance.
             if(instance < min((uint) _UdonLightVolumeCount, 32)) {
-                draw_vrc_light_volume_boxes(stream, instance); // 20 vertex count
+                draw_vrc_light_volume_boxes(stream, instance); // 20 vertex
             }
 
             // LV lights : 128 lights, 8 per instances (x32 = 128) by parallel batches of 32.
             // A batch can have heterogeneous types, but I cannot know their types in advance.
             uint point_light_volume_count = min((uint) _UdonPointLightVolumeCount, 128);
             [loop] for(uint light_id = instance; light_id < point_light_volume_count; light_id += 32) {
-                draw_vrc_light_volume_light(stream, light_id); // up to 7 vertex count
+                draw_vrc_light_volume_light(stream, light_id); // up to 7 vertex
             }
 
             // 16 Screens, 1 per instance for first 16.
-            draw_ltcgi_surface(stream, instance); // 7 vertex count
+            draw_ltcgi_surface(stream, instance); // 10 vertex
 
-            // Spread other workload on threads, starting at the end in case volumes are not using all instances.
-            // TODO spread on threads ?
+            // Spread remaining stuff vertex count on last threads. They are likely to use less vertex count.
+            // Does not fix divergence.
             [forcecase]
             switch (instance) {
                 case 31: {
@@ -527,7 +531,7 @@ Shader "Lereldarion/Debug/Lighting" {
                     break;
                 }
                 case 30: case 29: {
-                    // Reflection probes : 21 vertexcount
+                    // Reflection probes : 21 vertex
                     bool is_primary = instance == 30;
                     #if defined(UNITY_SPECCUBE_BLENDING) || defined(FORCE_BOX_PROJECTION)
                     float blend_factor = is_primary ? unity_SpecCube0_BoxMin.w : 1 - unity_SpecCube0_BoxMin.w;
@@ -543,12 +547,12 @@ Shader "Lereldarion/Debug/Lighting" {
                     break;
                 }
                 case 28: case 27: case 26: case 25: {
-                    // 4 Vertex point lights : 16 vertexcount per instance
+                    // 4 Vertex point lights : 6 vertex per instance
                     uint vertex_light_id = 28 - instance;
                     half3 color = unity_LightColor[vertex_light_id].rgb;
                     if(any(color > 0)) {
                         float3 position = float3(unity_4LightPosX0[vertex_light_id], unity_4LightPosY0[vertex_light_id], unity_4LightPosZ0[vertex_light_id]);
-                        unity_vertex_point_light(stream, color, position);
+                        unity_vertex_point_light(stream, color, position, unity_4LightAtten0[vertex_light_id]);
                     }
                     break;
                 }
@@ -564,11 +568,11 @@ Shader "Lereldarion/Debug/Lighting" {
             
             // Not worth instancing, too heterogeneous and small
             #if defined(POINT) || defined(POINT_COOKIE)
-            unity_point_light(stream, _LightColor0.rgb, _WorldSpaceLightPos0.xyz);
+            unity_pixel_point_light(stream, _LightColor0.rgb, _WorldSpaceLightPos0.xyz, unity_WorldToLight); // 14 vertex
             #elif defined(DIRECTIONAL) || defined(DIRECTIONAL_COOKIE)
-            unity_directional_light(stream, _LightColor0.rgb, -_WorldSpaceLightPos0.xyz);
+            unity_directional_light(stream, _LightColor0.rgb, -_WorldSpaceLightPos0.xyz); // 10 vertex
             #elif defined(SPOT)
-            unity_spot_light(stream, _LightColor0.rgb, _WorldSpaceLightPos0.xyz, unity_WorldToLight);
+            unity_spot_light(stream, _LightColor0.rgb, _WorldSpaceLightPos0.xyz, unity_WorldToLight); // 20 vertex
             #endif
         }
 

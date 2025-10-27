@@ -69,12 +69,12 @@ This shader requires a texture for the digits, but due to the SDF strategy it on
 
 ## Debug Lighting
 Apply to any mesh (only 1 vertex required), and it will display lighting configuration elements that touch the mesh renderer as gizmos in the world :
-- Unity realtime lights : pixel directional / point / spot lights, and vertex lights, colored by the light color.
-- Unity reflection probes : displays the bounding boxes and their center, with a sphere to show the cubemap. Color of the lines shows the blend factor when 2 probes are active.
+- Unity realtime lights : pixel directional / point / spot lights, vertex point lights, colored by the light color.
+- Unity reflection probes : displays the bounding boxes and their center, with a sphere to show the raw cubemap. Color of the lines shows the blend factor when 2 probes are active.
 - Unity light probes : sphere with lighting values applied to it. Positions are not available in the shader so they cannot be displayed.
-- [LTCGI](https://github.com/PiMaker/ltcgi) v1 : colored rectangles for screen surfaces + normal direction, with color hue depending on LTCGI surface indexing to distinguish them.
+- [LTCGI](https://github.com/PiMaker/ltcgi) v1 : emitting surfaces as rectangle edges + diagonals. A normal line at center. Solid lines. Color is item index.
 - [Light Volumes](https://github.com/REDSIM/VRCLightVolumes) v2 :
-    - volume bounding boxes, using dashed lines (dash count is texture resolution) and color hue to represent indexes.
+    - volume bounding boxes, dashed lines (dash size is texture resolution). Color hue represents indexes.
     - lights with simpler dashed patterns compared to unity equivalents. Color is the light color. Dash size is 1m and line lengths indicate culling distance.
 
 ![](.github/debug_lighting.png)
