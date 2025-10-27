@@ -75,7 +75,7 @@ Apply to any mesh (only 1 vertex required), and it will display lighting configu
 - [LTCGI](https://github.com/PiMaker/ltcgi) v1 : emitting surfaces as rectangle edges + diagonals. A normal line at center. Solid lines. Color is item index.
 - [Light Volumes](https://github.com/REDSIM/VRCLightVolumes) v2 :
     - volume bounding boxes, dashed lines (dash size is texture resolution). Color hue represents indexes.
-    - lights with simpler dashed patterns compared to unity equivalents. Color is the light color. Dash size is 1m and line lengths indicate culling distance.
+    - lights with simpler dashed patterns compared to unity equivalents. Color is the light color. Dash size is 1m and line lengths indicate culling distance. Display light cookies on spheres if used.
 
 ![](.github/debug_lighting.png)
 
