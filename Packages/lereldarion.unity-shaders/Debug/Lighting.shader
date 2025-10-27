@@ -2,12 +2,21 @@
 // Free to redistribute under the MIT license
 
 // Debug view for lighting metadata by generating 3D gizmos.
-// Supported :
-// - Dynamic lights : Directional, Point (pixel or vertex), Spotlight cone
-// - Light probes : indirect diffuse on a sphere.
-// - Reflection probes : solid boundary boxes, and dashed lines towards probe position. White/grey depending on blending. Texture value on a sphere.
-// - Displays REDSIM VRC Light Volumes (V1.0) as dashed boxes. Dash count is the resolution.
-// - LTCGI surfaces as colored quads.
+// 
+// Unity gizmos use solid lines and  :
+// - Directional lights : directional arrow, in front of camera. Color is light color
+// - Point lights : 8 radial spokes at light center. With "V" in the middle if vertex light. Color is light color.
+// - Spot light : cone boundary as octagonal pyramid. Color is light color.
+// - Light probes : indirect diffuse shading on a sphere in front of camera.
+// - Reflection probes : solid boundary boxes, and dashed lines towards probe position. White/grey depending on blending. Raw texture displayed on a sphere.
+// 
+// REDSIM VRC Light Volumes (V2.0) use dashed lines with less complexity :
+// - Light volumes as dashed boxes. Dash size is the texture resolution for each volume. Color is item index.
+// - Point light : 6 axis-aligned dashed lines. Lines lengths are the culling distance (dash size = 1m). Color is reconstructed hue.
+// - Spot light : 4 cone dashed edges. Lines lengths are the culling distance (dash size = 1m). Color is reconstructed hue.
+// - Area light : rectangle with solid edges. Dashed normal vector, length is culling distance (dash size = 1m). Color is reconstructed hue.
+// 
+// LTCGI : surfaces as colored quads bounds, and a normal line iat center. Solid lines. Color is item index.
 // TODO REDSIM Light Volumes V2 when stabilised and released (point/spot lights, new metadata format)
 // Not supported : Light Probe Proxy Volume ; this is a volume attached to a renderer that will provide the renderer with per-pixel light probes, so useless on avatars.
 
@@ -191,9 +200,9 @@ Shader "Lereldarion/Debug/Lighting" {
         };
 
         ///////////////////////////////////////////////////////////////////////
-        // Builtin renderer lighting
+        // Unity lighting gizmos
 
-        void directional_light(inout LineStream<LinePoint> s, half3 color, float3 light_forward_ws) {
+        void unity_directional_light(inout LineStream<LinePoint> s, half3 color, float3 light_forward_ws) {
             LineDrawer drawer = LineDrawer::init(color); // 10 calls
             float3x3 referential = referential_from_z(light_forward_ws);
 
@@ -213,7 +222,7 @@ Shader "Lereldarion/Debug/Lighting" {
             drawer.init_cs(s, origin_cs); drawer.solid_cs(s, tetrahedron_c); drawer.solid_cs(s, tetrahedron_a);
         }
 
-        void point_light(inout LineStream<LinePoint> s, half3 color, float3 pos) {
+        void unity_point_light(inout LineStream<LinePoint> s, half3 color, float3 pos) {
             LineDrawer drawer = LineDrawer::init(color); // 16 calls
             float3 ray_to_camera = centered_camera_ws - pos;
             float3x3 referential = referential_from_z(ray_to_camera);
@@ -228,7 +237,7 @@ Shader "Lereldarion/Debug/Lighting" {
             }
         }
 
-        void vertex_point_light(inout LineStream<LinePoint> s, half3 color, float3 pos) {
+        void unity_vertex_point_light(inout LineStream<LinePoint> s, half3 color, float3 pos) {
             LineDrawer drawer = LineDrawer::init(color); // 16 calls
             float3 ray_to_camera = centered_camera_ws - pos;
             float3x3 referential = referential_from_z(ray_to_camera);
@@ -244,7 +253,7 @@ Shader "Lereldarion/Debug/Lighting" {
             }
         }
 
-        void spot_light(inout LineStream<LinePoint> s, half3 color, float3 pos, float4x4 world_to_light) {
+        void unity_spot_light(inout LineStream<LinePoint> s, half3 color, float3 pos, float4x4 world_to_light) {
             LineDrawer drawer = LineDrawer::init(color); // 20 vertexcount
 
             // W2L * (W.xyz, 1) = L.xyzw
@@ -279,7 +288,7 @@ Shader "Lereldarion/Debug/Lighting" {
             }
         }
 
-        void reflection_probe(inout LineStream<LinePoint> s, half3 color, float3 position_ws, float3 bbox_min, float3 bbox_max) {
+        void unity_reflection_probe(inout LineStream<LinePoint> s, half3 color, float3 position_ws, float3 bbox_min, float3 bbox_max) {
             LineDrawer drawer = LineDrawer::init(color); // 21 calls
             // With no defined reflection boxes, unity will use the skybox with infinite bounding boxes.
             bool is_skybox = any(!isfinite(bbox_min));
@@ -454,7 +463,7 @@ Shader "Lereldarion/Debug/Lighting" {
             float3 center = (v0 + v1 + v2 + v3) / 4;
             float3 normal = normalize(cross(v1 - v0, v2 - v0)) * -1; // -1 = cross is defined for vector from geom to screen
 
-            drawer.init_ws(s, v0); drawer.solid_ws(s, v1); drawer.solid_ws(s, v3); drawer.solid_ws(s, v2); drawer.solid_ws(s, v0);
+            drawer.init_ws(s, v0); drawer.solid_ws(s, v1); drawer.solid_ws(s, v3); drawer.solid_ws(s, v2); drawer.solid_ws(s, v0); 
             drawer.init_ws(s, center); drawer.solid_ws(s, center + normal * length(v0 - center)); // Normal vector
         }
 
@@ -513,7 +522,7 @@ Shader "Lereldarion/Debug/Lighting" {
                     // Main directional light, which may be disabled
                     float3 light_forward_ws = -_WorldSpaceLightPos0.xyz;
                     if(length_sq(light_forward_ws) > 0) {
-                        directional_light(stream, _LightColor0.rgb, light_forward_ws);
+                        unity_directional_light(stream, _LightColor0.rgb, light_forward_ws);
                     }
                     break;
                 }
@@ -529,7 +538,7 @@ Shader "Lereldarion/Debug/Lighting" {
                     float3 bbox_min = is_primary ? unity_SpecCube0_BoxMin.xyz : unity_SpecCube1_BoxMin.xyz;
                     float3 bbox_max = is_primary ? unity_SpecCube0_BoxMax.xyz : unity_SpecCube1_BoxMax.xyz;
                     if (blend_factor > 0.00001) {
-                        reflection_probe(stream, blend_factor.xxx, position, bbox_min, bbox_max);
+                        unity_reflection_probe(stream, blend_factor.xxx, position, bbox_min, bbox_max);
                     }
                     break;
                 }
@@ -539,7 +548,7 @@ Shader "Lereldarion/Debug/Lighting" {
                     half3 color = unity_LightColor[vertex_light_id].rgb;
                     if(any(color > 0)) {
                         float3 position = float3(unity_4LightPosX0[vertex_light_id], unity_4LightPosY0[vertex_light_id], unity_4LightPosZ0[vertex_light_id]);
-                        vertex_point_light(stream, color, position);
+                        unity_vertex_point_light(stream, color, position);
                     }
                     break;
                 }
@@ -555,11 +564,11 @@ Shader "Lereldarion/Debug/Lighting" {
             
             // Not worth instancing, too heterogeneous and small
             #if defined(POINT) || defined(POINT_COOKIE)
-            point_light(stream, _LightColor0.rgb, _WorldSpaceLightPos0.xyz);
+            unity_point_light(stream, _LightColor0.rgb, _WorldSpaceLightPos0.xyz);
             #elif defined(DIRECTIONAL) || defined(DIRECTIONAL_COOKIE)
-            directional_light(stream, _LightColor0.rgb, -_WorldSpaceLightPos0.xyz);
+            unity_directional_light(stream, _LightColor0.rgb, -_WorldSpaceLightPos0.xyz);
             #elif defined(SPOT)
-            spot_light(stream, _LightColor0.rgb, _WorldSpaceLightPos0.xyz, unity_WorldToLight);
+            unity_spot_light(stream, _LightColor0.rgb, _WorldSpaceLightPos0.xyz, unity_WorldToLight);
             #endif
         }
 
