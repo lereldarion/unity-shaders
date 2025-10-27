@@ -13,11 +13,11 @@
 // 
 // REDSIM VRC Light Volumes (V2.0) use dashed lines with less complexity :
 // - Light volumes as dashed boxes. Dash size is the texture resolution for each volume. Color is item index.
-// - Point light : 6 axis-aligned dashed lines. Lines lengths are the culling distance (dash size = 1m). Color is reconstructed hue.
+// - Point light : 6 axis-aligned dashed lines. Lines lengths are the culling distance (dash size = 1m). Color is reconstructed hue. Show a probe sphere with cubemap if used.
 // - Spot light : 4 cone dashed edges. Lines lengths are the culling distance (dash size = 1m). Color is reconstructed hue.
 // - Area light : rectangle with solid edges. Dashed normal vector, length is culling distance (dash size = 1m). Color is reconstructed hue.
 // 
-// LTCGI : emitting surfaces as rectangle edges + diagonals. A normal line at center. Solid lines. Color is item index.
+// LTCGI : emitting surfacePoints as rectangle edges + diagonals. A normal line at center. Solid lines. Color is item index.
 
 Shader "Lereldarion/Debug/Lighting" {
     Properties {
@@ -59,9 +59,9 @@ Shader "Lereldarion/Debug/Lighting" {
             UNITY_VERTEX_OUTPUT_STEREO
         };
 
-        struct Sphere {
+        struct SurfacePoint {
             float4 position : SV_POSITION;
-            float3 normal : NORMAL_WS;
+            float3 uvw : UVW; // normal for texcube sampling
             nointerpolation uint mode : MODE; // 0 = LightProbe, 1 = SpecCube0, 2 = SpecCube1
             UNITY_VERTEX_OUTPUT_STEREO
         };
@@ -98,6 +98,10 @@ Shader "Lereldarion/Debug/Lighting" {
             q *= q;
             m -= float3x3(q.y + q.z, 0, 0, 0, q.x + q.z, 0, 0, 0, q.x + q.y);
             return m * 2.0;
+        }
+        float3 LV_MultiplyVectorByQuaternion(float3 v, float4 q) {
+            float3 t = 2.0 * cross(q.xyz, v);
+            return v + q.w * t + cross(q.xyz, t);
         }
 
         // math adapted from https://gist.github.com/mairod/a75e7b44f68110e1576d77419d608786?permalink_comment_id=3180018#gistcomment-3180018
@@ -526,7 +530,7 @@ Shader "Lereldarion/Debug/Lighting" {
                     // Main directional light, which may be disabled
                     float3 light_forward_ws = -_WorldSpaceLightPos0.xyz;
                     if(length_sq(light_forward_ws) > 0) {
-                        unity_directional_light(stream, _LightColor0.rgb, light_forward_ws);
+                        unity_directional_light(stream, _LightColor0.rgb, light_forward_ws); // 10 vertex
                     }
                     break;
                 }
@@ -542,7 +546,7 @@ Shader "Lereldarion/Debug/Lighting" {
                     float3 bbox_min = is_primary ? unity_SpecCube0_BoxMin.xyz : unity_SpecCube1_BoxMin.xyz;
                     float3 bbox_max = is_primary ? unity_SpecCube0_BoxMax.xyz : unity_SpecCube1_BoxMax.xyz;
                     if (blend_factor > 0.00001) {
-                        unity_reflection_probe(stream, blend_factor.xxx, position, bbox_min, bbox_max);
+                        unity_reflection_probe(stream, blend_factor.xxx, position, bbox_min, bbox_max); // 21 vertex
                     }
                     break;
                 }
@@ -552,7 +556,7 @@ Shader "Lereldarion/Debug/Lighting" {
                     half3 color = unity_LightColor[vertex_light_id].rgb;
                     if(any(color > 0)) {
                         float3 position = float3(unity_4LightPosX0[vertex_light_id], unity_4LightPosY0[vertex_light_id], unity_4LightPosZ0[vertex_light_id]);
-                        unity_vertex_point_light(stream, color, position, unity_4LightAtten0[vertex_light_id]);
+                        unity_vertex_point_light(stream, color, position, unity_4LightAtten0[vertex_light_id]); // 6 vertex
                     }
                     break;
                 }
@@ -577,17 +581,15 @@ Shader "Lereldarion/Debug/Lighting" {
         }
 
         ///////////////////////////////////////////////////////////////////////
-        // Sphere functions
-
-        // TODO light volume light cookies. Have a max budget for triangles, and generate a sphere per point light cookie, a quad per spotlight
+        // Surface functions
 
         static const uint sphere_subdivision = 4;
 
-        void draw_sphere_patch(inout TriangleStream<Sphere> stream, uint mode, uint id, float3 center, float radius) {
+        void draw_sphere_patch(inout TriangleStream<SurfacePoint> stream, uint mode, uint instance_0_24, float3 center, float radius, float4 rotation = float4(0, 0, 0, 1)) {
             // 6 faces, 4 strips of 4 quads for a cube-topology sphere.
-            uint face_id = id / sphere_subdivision; // [0, 6[
+            uint face_id = instance_0_24 / sphere_subdivision; // [0, 6[
             uint main_axis_id = face_id >= 3 ? face_id - 3 : face_id; // 0,1,2
-            float strip_id = id - sphere_subdivision * face_id; // [0, subdiv[
+            float strip_id = instance_0_24 - sphere_subdivision * face_id; // [0, subdiv[
             // Select axis for the face construction. normal is always active, and uv go from [-1, 1]
             float3 normal = main_axis_id == uint3(0, 1, 2) ? (face_id >= 3 ? -1 : 1) : 0; // 6 orientations
             float3 axis_u = main_axis_id == uint3(2, 0, 1) ? 1 : 0; // Any other axis
@@ -595,35 +597,57 @@ Shader "Lereldarion/Debug/Lighting" {
             // Strip along v
             float3 a_u_normal_components = normal + lerp(-axis_u, axis_u, strip_id / float(sphere_subdivision));
             float3 b_u_normal_components = normal + lerp(-axis_u, axis_u, (strip_id + 1) / float(sphere_subdivision));
-            Sphere sphere;
-            UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(sphere);
-            sphere.mode = mode;
+            SurfacePoint surface;
+            UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(surface);
+            surface.mode = mode;
             stream.RestartStrip();
             for(uint i = 0; i <= sphere_subdivision; i += 1) {
                 float3 v_component = lerp(-axis_v, axis_v, i / float(sphere_subdivision));
-                sphere.normal = normalize(a_u_normal_components + v_component) * radius;
-                sphere.position = UnityWorldToClipPos(center + sphere.normal);
-                stream.Append(sphere);
-                sphere.normal = normalize(b_u_normal_components + v_component) * radius;
-                sphere.position = UnityWorldToClipPos(center + sphere.normal);
-                stream.Append(sphere);
+                surface.uvw = normalize(a_u_normal_components + v_component);
+                surface.position = UnityWorldToClipPos(center + LV_MultiplyVectorByQuaternion(surface.uvw * radius, rotation));
+                stream.Append(surface);
+                surface.uvw = normalize(b_u_normal_components + v_component);
+                surface.position = UnityWorldToClipPos(center + LV_MultiplyVectorByQuaternion(surface.uvw * radius, rotation));
+                stream.Append(surface);
             }
         }
 
-        half4 fragment_sphere (Sphere sphere) : SV_Target {
-            UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(sphere);
-            float3 normal = normalize(sphere.normal);
-            switch(sphere.mode) {
+        uniform Texture2DArray _UdonPointLightVolumeTexture;
+        uniform SamplerState sampler_UdonPointLightVolumeTexture;
+
+        float4 LV_SampleCubemapArray(uint id, float3 dir) {
+            float3 absDir = abs(dir);
+            float2 uv;
+            uint face;
+            if (absDir.x >= absDir.y && absDir.x >= absDir.z) {
+                face = dir.x > 0 ? 0 : 1;
+                uv = float2((dir.x > 0 ? -dir.z : dir.z), -dir.y) * rcp(absDir.x);
+            } else if (absDir.y >= absDir.z) {
+                face = dir.y > 0 ? 2 : 3;
+                uv = float2(dir.x, (dir.y > 0 ? dir.z : -dir.z)) * rcp(absDir.y);
+            } else {
+                face = dir.z > 0 ? 4 : 5;
+                uv = float2((dir.z > 0 ? dir.x : -dir.x), -dir.y) * rcp(absDir.z);
+            }
+            float3 uvid = float3(uv * 0.5 + 0.5, id * 6 + face);
+            return _UdonPointLightVolumeTexture.SampleLevel(sampler_UdonPointLightVolumeTexture, uvid, 0);
+        }
+
+        half4 fragment_triangles (SurfacePoint surface) : SV_Target {
+            UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(surface);
+            float3 normal = normalize(surface.uvw);
+            switch(surface.mode & 0x7) {
                 case 0: return half4(ShadeSH9(float4(normal, 1)), 1);
                 case 1: return half4(DecodeHDR(UNITY_SAMPLE_TEXCUBE_LOD(unity_SpecCube0, normal, 0), unity_SpecCube0_HDR), 1);
                 case 2: return half4(DecodeHDR(UNITY_SAMPLE_TEXCUBE_SAMPLER_LOD(unity_SpecCube1, unity_SpecCube0, normal, 0), unity_SpecCube1_HDR), 1);
+                case 4: return LV_SampleCubemapArray(surface.mode >> 3, normal);
                 default: return half4(0, 0, 0, 1);
             }
         }
 
         [instance(6 /*faces*/ * sphere_subdivision)]
-        [maxvertexcount(((sphere_subdivision + 1) * 2) /*1 strip*/ * 3 /*spheres*/)]
-        void geometry_spheres(point MeshData input[1], uint primitive_id : SV_PrimitiveID, uint instance : SV_GSInstanceID, inout TriangleStream<Sphere> stream) {
+        [maxvertexcount(((sphere_subdivision + 1) * 2) /*1 strip*/ * (3 /*unity spheres*/ + 7 /*arbitrary max LV spheres*/))]
+        void geometry_triangles(point MeshData input[1], uint primitive_id : SV_PrimitiveID, uint instance : SV_GSInstanceID, inout TriangleStream<SurfacePoint> stream) {
             UNITY_SETUP_INSTANCE_ID(input[0]);
 
             if (!(_VRChatMirrorMode == 0 && primitive_id == 0 && within_distance_limit())) { return; }
@@ -631,13 +655,32 @@ Shader "Lereldarion/Debug/Lighting" {
             draw_sphere_patch(stream, 0, instance, arbitrary_anchor_point_ws(), _LightProbe_Radius); // Light Probe
             draw_sphere_patch(stream, 1, instance, unity_SpecCube0_ProbePosition, _ReflectionProbe_Radius);
             #if defined(UNITY_SPECCUBE_BLENDING) || defined(FORCE_BOX_PROJECTION)
-            if (unity_SpecCube0_BoxMin.w < 0.99999) {
+            [branch] if (unity_SpecCube0_BoxMin.w < 0.99999) {
                 draw_sphere_patch(stream, 2, instance, unity_SpecCube1_ProbePosition, _ReflectionProbe_Radius);
             }
             #endif
+
+            const uint point_light_volume_count = min((uint) _UdonPointLightVolumeCount, 128);
+            [loop] for(uint light_id = 0; light_id < point_light_volume_count; light_id += 1) {
+                const float3 custom_id_data = _UdonPointLightVolumeCustomID[light_id];
+                [branch] if(custom_id_data.x < 0) {
+                    // Light with cookie to display
+                    const float4 position = _UdonPointLightVolumePosition[light_id];
+                    const float4 rotation = _UdonPointLightVolumeDirection[light_id]; // Always a rotation for texture cases
+                    if(position.w < 0) {
+                        // spot light cookie TODO
+                    } else {
+                        // point light cubemap
+                        uint mode = 4 | (uint(-custom_id_data.x - 1) << 3);
+                        draw_sphere_patch(stream, mode, instance, position.xyz, _ReflectionProbe_Radius, float4(rotation.xyz, -rotation.w));
+                    }
+                }
+            }
         }
 
         ENDCG
+
+        // TODO add pass cookies : spot, point
 
         ///////////////////////////////////////////////////////////////////////
         // Assemble all passes
@@ -677,8 +720,8 @@ Shader "Lereldarion/Debug/Lighting" {
 
             CGPROGRAM
             #pragma vertex vertex_stage
-            #pragma geometry geometry_spheres
-            #pragma fragment fragment_sphere
+            #pragma geometry geometry_triangles
+            #pragma fragment fragment_triangles
             #pragma multi_compile_instancing
             ENDCG
         }
