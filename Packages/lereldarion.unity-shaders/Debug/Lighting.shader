@@ -662,7 +662,7 @@ Shader "Lereldarion/Debug/Lighting" {
 
         [instance(6 /*faces*/ * sphere_subdivision)]
         [maxvertexcount(((sphere_subdivision + 1) * 2) /*1 strip*/ * (3 /*unity spheres*/ + 7 /*arbitrary max LV spheres*/))]
-        void geometry_triangles(point MeshData input[1], uint primitive_id : SV_PrimitiveID, uint instance : SV_GSInstanceID, inout TriangleStream<Sphere> stream) {
+        void geometry_triangles_base(point MeshData input[1], uint primitive_id : SV_PrimitiveID, uint instance : SV_GSInstanceID, inout TriangleStream<Sphere> stream) {
             UNITY_SETUP_INSTANCE_ID(input[0]);
 
             if (!(_VRChatMirrorMode == 0 && primitive_id == 0 && within_distance_limit())) { return; }
@@ -693,6 +693,7 @@ Shader "Lereldarion/Debug/Lighting" {
                         // point light cubemap
                         const uint texture_id = -custom_id_data.x - 1;
                         sphere.mode = 4 | (texture_id << 3);
+                        sphere.spot_tan_angle = 0;
                     }
                     instanced_draw_sphere(stream, sphere, instance, position.xyz, _ReflectionProbe_Radius, float4(rotation.xyz, -rotation.w));
                 }
@@ -701,7 +702,7 @@ Shader "Lereldarion/Debug/Lighting" {
 
         ENDCG
 
-        // TODO add pass cookies : spot, point
+        // TODO Maybe consider add-pass cookies : spot, point. They seem difficult to use, and rarely used, so for now avoid them.
 
         ///////////////////////////////////////////////////////////////////////
         // Assemble all passes
@@ -741,7 +742,7 @@ Shader "Lereldarion/Debug/Lighting" {
 
             CGPROGRAM
             #pragma vertex vertex_stage
-            #pragma geometry geometry_triangles
+            #pragma geometry geometry_triangles_base
             #pragma fragment fragment_triangles
             #pragma multi_compile_instancing
             ENDCG
