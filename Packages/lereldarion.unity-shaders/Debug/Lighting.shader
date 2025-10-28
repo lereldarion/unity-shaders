@@ -21,9 +21,13 @@
 
 Shader "Lereldarion/Debug/Lighting" {
     Properties {
-        _Distance_Limit ("Enable the debug view only if distance object-camera is lower than this threshold", Float) = 10
+        _Distance_Limit ("Enable visuals only if distance object-camera is lower than this threshold", Float) = 10
+        _ViewSpace_Anchor ("View space anchor point for some items", Vector) = (0, 0, -1.5, 0)
+        
+        [Header(Gizmos radius)]
         _LightProbe_Radius ("Light Probe sphere radius", Float) = 0.05
         _ReflectionProbe_Radius ("Reflection Probe sphere radius", Float) = 0.2
+        _Light_Cookie_Radius ("Sphere radius to display light cookies/cubemaps", Float) = 0.2
     }
     SubShader {
         Tags {
@@ -41,9 +45,11 @@ Shader "Lereldarion/Debug/Lighting" {
         #include "AutoLight.cginc"
 
         uniform float _VRChatMirrorMode;
+        uniform float3 _ViewSpace_Anchor;
         uniform float _Distance_Limit;
         uniform float _LightProbe_Radius;
         uniform float _ReflectionProbe_Radius;
+        uniform float _Light_Cookie_Radius;
 
         ///////////////////////////////////////////////////////////////////////
         // Structs
@@ -150,10 +156,9 @@ Shader "Lereldarion/Debug/Lighting" {
             return transpose(float4x4(adjM0*invDet,adjM1*invDet,adjM2*invDet,adjM3*invDet));
         }
 
-        float3 arbitrary_anchor_point_ws() {
+        float3 item_anchor_point_ws() {
             // A point in front of the camera to attach items such as directional light vector, lightprobe values...
-            float3 camera_fwd_ws = mul((float3x3) unity_MatrixInvV, float3(0, 0, -1));
-            return centered_camera_ws + 1.5 * camera_fwd_ws;
+            return centered_camera_ws + mul((float3x3) unity_MatrixInvV, _ViewSpace_Anchor);
         }
 
         bool within_distance_limit() {
@@ -211,7 +216,7 @@ Shader "Lereldarion/Debug/Lighting" {
             float3x3 referential = referential_from_z(light_forward_ws);
 
             // Line to an arbitrary point in front of the camera (directional lights are infinite)
-            float3 target = arbitrary_anchor_point_ws();
+            float3 target = item_anchor_point_ws();
             float3 origin = target - 0.5 * referential[2];
             float4 origin_cs = UnityWorldToClipPos(origin);
             drawer.init_ws(s, target); drawer.solid_cs(s, origin_cs);
@@ -661,21 +666,26 @@ Shader "Lereldarion/Debug/Lighting" {
         }
 
         [instance(6 /*faces*/ * sphere_subdivision)]
-        [maxvertexcount(((sphere_subdivision + 1) * 2) /*1 strip*/ * (3 /*unity spheres*/ + 7 /*arbitrary max LV spheres*/))]
+        [maxvertexcount(((sphere_subdivision + 1) * 2) /*1 strip*/ * (3 /*unity spheres*/ + 8 /*max LV spheres*/))]
         void geometry_triangles_base(point MeshData input[1], uint primitive_id : SV_PrimitiveID, uint instance : SV_GSInstanceID, inout TriangleStream<Sphere> stream) {
             UNITY_SETUP_INSTANCE_ID(input[0]);
 
             if (!(_VRChatMirrorMode == 0 && primitive_id == 0 && within_distance_limit())) { return; }
 
-            instanced_draw_sphere(stream, 0, instance, arbitrary_anchor_point_ws(), _LightProbe_Radius); // Light Probe
-            instanced_draw_sphere(stream, 1, instance, unity_SpecCube0_ProbePosition, _ReflectionProbe_Radius);
-            #if defined(UNITY_SPECCUBE_BLENDING) || defined(FORCE_BOX_PROJECTION)
-            [branch] if (unity_SpecCube0_BoxMin.w < 0.99999) {
-                instanced_draw_sphere(stream, 2, instance, unity_SpecCube1_ProbePosition, _ReflectionProbe_Radius);
+            if(_LightProbe_Radius > 0) {
+                instanced_draw_sphere(stream, 0, instance, item_anchor_point_ws(), _LightProbe_Radius); // Light Probe
             }
-            #endif
+            if(_ReflectionProbe_Radius > 0) {
+                instanced_draw_sphere(stream, 1, instance, unity_SpecCube0_ProbePosition, _ReflectionProbe_Radius);
+                #if defined(UNITY_SPECCUBE_BLENDING) || defined(FORCE_BOX_PROJECTION)
+                [branch] if (unity_SpecCube0_BoxMin.w < 0.99999) {
+                    instanced_draw_sphere(stream, 2, instance, unity_SpecCube1_ProbePosition, _ReflectionProbe_Radius);
+                }
+                #endif
+            }
 
-            const uint point_light_volume_count = min((uint) _UdonPointLightVolumeCount, 128);
+            uint point_light_volume_count = min((uint) _UdonPointLightVolumeCount, 128);
+            if(_Light_Cookie_Radius <= 0) { point_light_volume_count = 0; } // Disable render without new branchs
             [loop] for(uint light_id = 0; light_id < point_light_volume_count; light_id += 1) {
                 const float3 custom_id_data = _UdonPointLightVolumeCustomID[light_id];
                 [branch] if(custom_id_data.x < 0) {
@@ -695,7 +705,7 @@ Shader "Lereldarion/Debug/Lighting" {
                         sphere.mode = 4 | (texture_id << 3);
                         sphere.spot_tan_angle = 0;
                     }
-                    instanced_draw_sphere(stream, sphere, instance, position.xyz, _ReflectionProbe_Radius, float4(rotation.xyz, -rotation.w));
+                    instanced_draw_sphere(stream, sphere, instance, position.xyz, _Light_Cookie_Radius, float4(rotation.xyz, -rotation.w));
                 }
             }
         }
