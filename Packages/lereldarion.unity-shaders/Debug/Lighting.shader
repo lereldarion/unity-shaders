@@ -6,16 +6,16 @@
 // 
 // Unity gizmos use solid lines :
 // - Directional lights : directional arrow, in front of camera. Color is light color.
-// - Pixel point lights : 14 rays from light center (axis-aligned + diagonals). Color is light color.
-// - Vertex point lights : 6 rays from light center (axis-aligned). Color is light color.
-// - Spot light : cone boundary as octagonal pyramid. Color is light color.
+// - Pixel point lights : 14 rays from light center (axis-aligned + diagonals) + center octahedron. Color is light color.
+// - Vertex point lights : 6 rays from light center (axis-aligned) + center octahedron. Color is light color.
+// - Spot light : cone boundary as octagonal pyramid, + central cone. Color is light color.
 // - Light probes : indirect diffuse shading on a sphere in front of camera.
 // - Reflection probes : solid boundary boxes, and dashed lines towards probe position. White/grey depending on blending. Raw texture displayed on a sphere.
 // 
 // REDSIM VRC Light Volumes (V2.0) use dashed lines with less complexity :
 // - Light volumes as dashed boxes. Dash size is the texture resolution for each volume. Color is item index.
-// - Point light : 6 axis-aligned dashed lines. Lines lengths are the culling distance (dash size = 1m). Color is reconstructed hue. Show a probe sphere with cubemap if used.
-// - Spot light : 4 cone dashed edges. Lines lengths are the culling distance (dash size = 1m). Color is reconstructed hue. Show a probe sphere with cookie if used.
+// - Point light : 6 axis-aligned dashed lines + central octahedron. Lines lengths are the culling distance (dash size = 1m). Color is reconstructed hue. Show a probe sphere with cubemap if used.
+// - Spot light : 4 cone dashed edges + central cone. Lines lengths are the culling distance (dash size = 1m). Color is reconstructed hue. Show a probe sphere with cookie if used.
 // - Area light : rectangle with solid edges. Dashed normal vector, length is culling distance (dash size = 1m). Color is reconstructed hue.
 // 
 // LTCGI : emitting surfacePoints as rectangle edges + diagonals. A normal line at center. Solid lines. Color is item index.
@@ -232,23 +232,39 @@ Shader "Lereldarion/Debug/Lighting" {
             drawer.init_cs(s, origin_cs); drawer.solid_cs(s, tetrahedron_c); drawer.solid_cs(s, tetrahedron_a);
         }
 
-        void draw_unity_pixel_point_light(inout LineStream<LinePoint> s, half3 color, float3 pos, float4x4 world_to_light) {
-            LineDrawer drawer = LineDrawer::init(color); // 14 calls
+        void draw_unity_pixel_point_light_instanced(inout LineStream<LinePoint> s, uint instance_0_8, half3 color, float3 pos, float4x4 world_to_light) {
+            LineDrawer drawer = LineDrawer::init(color); // 10 calls
             
             // Pixel point light : world to light is a nice matrix with rotation + scale + translation.
-            // Only use inverse for scale + rotation, as we have the center separately. Cheaper 70 math vs 78 math.
-            float3x3 light_to_world = (float3x3) inverse(world_to_light);
+            // Only use inverse for scale + rotation, as we have the center separately. Cheaper math.
+            const float3x3 light_to_world = (float3x3) inverse(world_to_light);
 
-            // Axis aligned rays
-            drawer.init_ws(s, pos + mul(light_to_world, float3(-1,  0,  0))); drawer.solid_ws(s, pos + mul(light_to_world, float3(1, 0, 0)));
-            drawer.init_ws(s, pos + mul(light_to_world, float3( 0, -1,  0))); drawer.solid_ws(s, pos + mul(light_to_world, float3(0, 1, 0)));
-            drawer.init_ws(s, pos + mul(light_to_world, float3( 0,  0, -1))); drawer.solid_ws(s, pos + mul(light_to_world, float3(0, 0, 1)));
-            // Diagonal rays
-            float c = 1. / sqrt(3.);
-            drawer.init_ws(s, pos + mul(light_to_world, float3(-c, -c, -c))); drawer.solid_ws(s, pos + mul(light_to_world, float3( c,  c,  c)));
-            drawer.init_ws(s, pos + mul(light_to_world, float3( c, -c, -c))); drawer.solid_ws(s, pos + mul(light_to_world, float3(-c,  c,  c)));
-            drawer.init_ws(s, pos + mul(light_to_world, float3(-c,  c, -c))); drawer.solid_ws(s, pos + mul(light_to_world, float3( c, -c,  c)));
-            drawer.init_ws(s, pos + mul(light_to_world, float3(-c, -c,  c))); drawer.solid_ws(s, pos + mul(light_to_world, float3( c,  c, -c)));
+            // Light space unit vectors are culling distances
+            const float light_radius = _Light_Radius / length(mul(light_to_world, float3(1, 0, 0)));
+
+            // Draw a central octahedron and 6 axis-aligned rays from each corner.
+            if(instance_0_8 < 6) {
+                const uint instance_0_6 = instance_0_8;
+                const uint instance_0_3 = instance_0_6 >= 3 ? instance_0_6 - 3 : instance_0_6;
+                const float direction = instance_0_6 >= 3 ? -1 : 1;
+                float3 axis_x = mul(light_to_world, uint3(0, 1, 2) == instance_0_3 ? direction : 0);
+                float3 axis_y = mul(light_to_world, uint3(2, 0, 1) == instance_0_3 ? direction : 0);
+                drawer.init_ws(s, pos - axis_x * light_radius);
+                drawer.solid_ws(s, pos + axis_y * light_radius);
+                drawer.solid_ws(s, pos + axis_x * light_radius);
+                drawer.solid_ws(s, pos + axis_x);
+            }
+
+            // For each octahedron facets, make it a tetrahedron with central point + ray
+            float3 facet_corner = instance_0_8 & uint3(1, 2, 4) ? -1 : 1;
+            float3 facet_ray_ws = mul(light_to_world, facet_corner * rsqrt(3));
+            float4 facet_corner_at_radius_cs = UnityWorldToClipPos(pos + facet_ray_ws * light_radius * 0.75 /*arbitrary factor to look good*/);
+            drawer.init_ws(s, pos + mul(light_to_world, float3(facet_corner.x * light_radius, 0, 0)));
+            drawer.solid_cs(s, facet_corner_at_radius_cs);
+            drawer.solid_ws(s, pos + mul(light_to_world, float3(0, facet_corner.y * light_radius, 0)));
+            drawer.init_ws(s, pos + mul(light_to_world, float3(0, 0, facet_corner.z * light_radius)));
+            drawer.solid_cs(s, facet_corner_at_radius_cs);
+            drawer.solid_ws(s, pos + facet_ray_ws);
         }
 
         void draw_unity_vertex_point_light_instanced(inout LineStream<LinePoint> s, uint instance_0_6, half3 color, float3 pos, float attenuation) {
@@ -266,8 +282,8 @@ Shader "Lereldarion/Debug/Lighting" {
             drawer.solid_ws(s, pos + axis_x * range);
         }
 
-        void draw_unity_spot_light(inout LineStream<LinePoint> s, half3 color, float3 pos, float4x4 world_to_light) {
-            LineDrawer drawer = LineDrawer::init(color); // 20 vertexcount
+        void draw_unity_spot_light_instanced(inout LineStream<LinePoint> s, uint instance_0_4, half3 color, float3 cone_point_ws, float4x4 world_to_light) {
+            LineDrawer drawer = LineDrawer::init(color); // 8 vertexcount
 
             // W2L * (W.xyz, 1) = L.xyzw
             // From AutoLight.cginc : the light cone is defined by uv.xy=L.xy/L.w in [-0.5, 0.5] and L.z in [0, 1]
@@ -277,27 +293,35 @@ Shader "Lereldarion/Debug/Lighting" {
 
             // L = (0, 0, 1)
             world_to_light._m03_m13_m23_m33 = float4(0, 0, 0, -1);
-            float3 L001_ws = mul(inverse(world_to_light), float4(0, 0, 1, 0) - w2l_3).xyz;
+            const float3 L001_ws = mul(inverse(world_to_light), float4(0, 0, 1, 0) - w2l_3).xyz;
             // +x : L = (0.5, 0, 1)
             world_to_light._m03_m13_m23_m33 = float4(0.5, 0, 0, -1);
-            float3 Lx_ws = mul(inverse(world_to_light), float4(0, 0, 1, 0) - w2l_3).xyz - L001_ws;
+            const float3 Lx_ws = mul(inverse(world_to_light), float4(0, 0, 1, 0) - w2l_3).xyz - L001_ws;
             // +y : L = (0, 0.5, 1)
             world_to_light._m03_m13_m23_m33 = float4(0, 0.5, 0, -1);
-            float3 Ly_ws = mul(inverse(world_to_light), float4(0, 0, 1, 0) - w2l_3).xyz - L001_ws;
+            const float3 Ly_ws = mul(inverse(world_to_light), float4(0, 0, 1, 0) - w2l_3).xyz - L001_ws;
 
-            // Cone
-            float4 cone_point_cs = UnityWorldToClipPos(pos);
-            float4 cone_base_cs[8];
-            [unroll] for(uint i = 0; i < 8; i += 1) {
-                float2 scale;
-                sincos(i * UNITY_TWO_PI / 8, scale.x, scale.y);
-                cone_base_cs[i] = UnityWorldToClipPos(L001_ws + scale.x * Lx_ws + scale.y * Ly_ws);
-            }
-            for(i = 0; i < 8; i += 2) {
-                drawer.init_cs(s, cone_base_cs[i + 1]); drawer.solid_cs(s, cone_base_cs[i]);
-                drawer.solid_cs(s, cone_point_cs); drawer.solid_cs(s, cone_base_cs[i + 1]);
-                drawer.solid_cs(s, cone_base_cs[(i + 2) % 8]);
-            }
+            // Truncated octahedral pyramid / cone. One quarter per instance.
+            const float3 x_axis_ws = (instance_0_4 & 1 ? Ly_ws : Lx_ws) * (instance_0_4 & 2 ? -1 : 1); // +x +y -x -y
+            const uint next_instance = instance_0_4 + 1;
+            const float3 y_axis_ws = (next_instance & 1 ? Ly_ws : Lx_ws) * (next_instance & 2 ? -1 : 1); // +y -x -y +x
+            
+            const float3 cone_base_0_ws = L001_ws + x_axis_ws;
+            const float3 cone_base_1_ws = L001_ws + (x_axis_ws + y_axis_ws) * rsqrt(2);
+            const float3 cone_base_2_ws = L001_ws + y_axis_ws;
+            
+            const float4 cone_base_1_cs = UnityWorldToClipPos(cone_base_1_ws);
+            drawer.init_cs( s, cone_base_1_cs);
+            drawer.solid_ws(s, cone_base_0_ws);
+            drawer.solid_ws(s, cone_point_ws);
+            drawer.solid_cs(s, cone_base_1_cs);
+            drawer.solid_ws(s, cone_base_2_ws);
+
+            // Octahedron at _Light_Radius
+            const float ratio = _Light_Radius / length(cone_base_0_ws - cone_point_ws);
+            drawer.init_ws( s, lerp(cone_point_ws, cone_base_0_ws, ratio));
+            drawer.solid_ws(s, lerp(cone_point_ws, cone_base_1_ws, ratio));
+            drawer.solid_ws(s, lerp(cone_point_ws, cone_base_2_ws, ratio));
         }
 
         void draw_unity_reflection_probe_instanced(inout LineStream<LinePoint> s, uint instance_0_4, half3 color, float3 position_ws, float3 bbox_min, float3 bbox_max) {
@@ -385,7 +409,7 @@ Shader "Lereldarion/Debug/Lighting" {
             
             // Select mode code from LightVolumes.cginc
             [branch] if(position.w < 0) {
-                // spot light : 6 vertex count
+                // spot light : 11 vertex count
                 float2 sin_cos_size;
                 if(custom_id_data.x >= 0) {
                     // No cookie. Analytical light with no specific rotation, so align to vertical.
@@ -399,14 +423,31 @@ Shader "Lereldarion/Debug/Lighting" {
                 }
                 sin_cos_size *= culling_distance;
 
+                float3 corners_ws[4] = {
+                    mul(float3(sin_cos_size.x, 0, sin_cos_size.y), referential),
+                    mul(float3(0, sin_cos_size.x, sin_cos_size.y), referential),
+                    mul(float3(-sin_cos_size.x, 0, sin_cos_size.y), referential),
+                    mul(float3(0, -sin_cos_size.x, sin_cos_size.y), referential),
+                };
+
                 // Cone with 4 lines, dashed to indicate culling_distance
                 float4 position_cs = UnityWorldToClipPos(position.xyz);
-                drawer.init_ws(s, position.xyz + mul(float3(-sin_cos_size.x, 0, sin_cos_size.y), referential), culling_distance);
+                drawer.init_ws(s, position.xyz + corners_ws[0], culling_distance);
                 drawer.dashed_cs(s, position_cs, -culling_distance);
-                drawer.dashed_ws(s, position.xyz + mul(float3(sin_cos_size.x, 0, sin_cos_size.y), referential), culling_distance);
-                drawer.init_ws(s, position.xyz + mul(float3(0, -sin_cos_size.x, sin_cos_size.y), referential), culling_distance);
+                drawer.dashed_ws(s, position.xyz + corners_ws[2], culling_distance);
+                drawer.init_ws(s, position.xyz + corners_ws[1], culling_distance);
                 drawer.dashed_cs(s, position_cs, -culling_distance);
-                drawer.dashed_ws(s, position.xyz + mul(float3(0, sin_cos_size.x, sin_cos_size.y), referential), culling_distance);
+                drawer.dashed_ws(s, position.xyz + corners_ws[3], culling_distance);
+
+                // Small square at _Light_Radius
+                const float ratio = _Light_Radius / culling_distance;
+                const float4 ring_0_cs = UnityWorldToClipPos(position.xyz + ratio * corners_ws[0]);
+                drawer.init_cs(s, ring_0_cs);
+                drawer.solid_ws(s, position.xyz + ratio * corners_ws[1]);
+                drawer.solid_ws(s, position.xyz + ratio * corners_ws[2]);
+                drawer.solid_ws(s, position.xyz + ratio * corners_ws[3]);
+                drawer.solid_cs(s, ring_0_cs);
+
             } else if (color.w <= 1.5f) {
                 // point light : 24 vertex count
                 // rotation quaternion is not updated if no cookie, fine by me
@@ -423,7 +464,7 @@ Shader "Lereldarion/Debug/Lighting" {
                 for(uint i = 0; i < 3; i += 1) {
                     drawer.init_cs(s, corners_cs[i]);
                     drawer.solid_cs(s, corners_cs[(i + 1) % 3]);
-                    drawer.solid_cs(s, corners_cs[i + 3]);
+                    drawer.solid_cs(s, corners_cs[3 + i]);
                     drawer.dashed_ws(s, position.xyz + referential[i] * culling_distance, culling_distance - _Light_Radius);
                     drawer.init_cs(s, corners_cs[3 + i]);
                     drawer.solid_cs(s, corners_cs[3 + (i + 1) % 3]);
@@ -583,19 +624,24 @@ Shader "Lereldarion/Debug/Lighting" {
             }
         }
 
-        [maxvertexcount(20)]
-        void geometry_lines_add(point MeshData input[1], uint primitive_id : SV_PrimitiveID, inout LineStream<LinePoint> stream) {
+        [instance(8)]
+        [maxvertexcount(10)]
+        void geometry_lines_add(const point MeshData input[1], const uint primitive_id : SV_PrimitiveID, const uint instance : SV_GSInstanceID, inout LineStream<LinePoint> stream) {
             UNITY_SETUP_INSTANCE_ID(input[0]);
             
             if (!(_VRChatMirrorMode == 0 && primitive_id == 0 && within_distance_limit())) { return; }
             
             // Not worth instancing, too heterogeneous and small
             #if defined(POINT) || defined(POINT_COOKIE)
-            draw_unity_pixel_point_light(stream, _LightColor0.rgb, _WorldSpaceLightPos0.xyz, unity_WorldToLight); // 14 vertex
+            draw_unity_pixel_point_light_instanced(stream, instance, _LightColor0.rgb, _WorldSpaceLightPos0.xyz, unity_WorldToLight); // 10 vertex
             #elif defined(DIRECTIONAL) || defined(DIRECTIONAL_COOKIE)
-            draw_unity_directional_light(stream, _LightColor0.rgb, -_WorldSpaceLightPos0.xyz); // 10 vertex
+            if(instance == 0) {
+                draw_unity_directional_light(stream, _LightColor0.rgb, -_WorldSpaceLightPos0.xyz); // 10 vertex
+            }
             #elif defined(SPOT)
-            draw_unity_spot_light(stream, _LightColor0.rgb, _WorldSpaceLightPos0.xyz, unity_WorldToLight); // 20 vertex
+            if(instance < 4) {
+                draw_unity_spot_light_instanced(stream, instance, _LightColor0.rgb, _WorldSpaceLightPos0.xyz, unity_WorldToLight); // 8 vertex
+            }
             #endif
         }
 
