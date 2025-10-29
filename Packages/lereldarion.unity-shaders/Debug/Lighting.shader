@@ -253,7 +253,6 @@ Shader "Lereldarion/Debug/Lighting" {
 
         void draw_unity_vertex_point_light_instanced(inout LineStream<LinePoint> s, uint instance_0_6, half3 color, float3 pos, float attenuation) {
             LineDrawer drawer = LineDrawer::init(color); // 4 calls
-            
             const float range = 5.0 * rsqrt(attenuation); // https://discussions.unity.com/t/point-light-in-v-f-shader/679554/10 Pema
 
             // Draw a central octahedron and 6 axis-aligned rays from each corner.
@@ -409,16 +408,28 @@ Shader "Lereldarion/Debug/Lighting" {
                 drawer.dashed_cs(s, position_cs, -culling_distance);
                 drawer.dashed_ws(s, position.xyz + mul(float3(0, sin_cos_size.x, sin_cos_size.y), referential), culling_distance);
             } else if (color.w <= 1.5f) {
-                // point light : 6 vertex count
+                // point light : 24 vertex count
                 // rotation quaternion is not updated if no cookie, fine by me
                 
-                // axis aligned 3 lines with dashes for culling distance
-                drawer.init_ws(s, position.xyz + mul(float3(-culling_distance, 0, 0), referential), -culling_distance);
-                drawer.dashed_ws(s, position.xyz + mul(float3(culling_distance, 0, 0), referential), 2 * culling_distance);
-                drawer.init_ws(s, position.xyz + mul(float3(0, -culling_distance, 0), referential), -culling_distance);
-                drawer.dashed_ws(s, position.xyz + mul(float3(0, culling_distance, 0), referential), 2 * culling_distance);
-                drawer.init_ws(s, position.xyz + mul(float3(0, 0, -culling_distance), referential), -culling_distance);
-                drawer.dashed_ws(s, position.xyz + mul(float3(0, 0, culling_distance), referential), 2 * culling_distance);
+                // Draw a central octahedron and 6 axis-aligned rays from each corner. Rays are dashed compared to vertex light.
+                float4 corners_cs[6] = {
+                    UnityWorldToClipPos(position.xyz - referential[0] * _Light_Radius),
+                    UnityWorldToClipPos(position.xyz - referential[1] * _Light_Radius),
+                    UnityWorldToClipPos(position.xyz - referential[2] * _Light_Radius),
+                    UnityWorldToClipPos(position.xyz + referential[0] * _Light_Radius),
+                    UnityWorldToClipPos(position.xyz + referential[1] * _Light_Radius),
+                    UnityWorldToClipPos(position.xyz + referential[2] * _Light_Radius),
+                };
+                for(uint i = 0; i < 3; i += 1) {
+                    drawer.init_cs(s, corners_cs[i]);
+                    drawer.solid_cs(s, corners_cs[(i + 1) % 3]);
+                    drawer.solid_cs(s, corners_cs[i + 3]);
+                    drawer.dashed_ws(s, position.xyz + referential[i] * culling_distance, culling_distance - _Light_Radius);
+                    drawer.init_cs(s, corners_cs[3 + i]);
+                    drawer.solid_cs(s, corners_cs[3 + (i + 1) % 3]);
+                    drawer.solid_cs(s, corners_cs[i]);
+                    drawer.dashed_ws(s, position.xyz - referential[i] * culling_distance, culling_distance - _Light_Radius);
+                }
             } else {
                 // area light : 7 vertex count
                 // For some reason the referential matrix is inverse of the others. Whatever...
@@ -505,7 +516,7 @@ Shader "Lereldarion/Debug/Lighting" {
         }
 
         [instance(32)]
-        [maxvertexcount(100)] // Max is 128 for this output type
+        [maxvertexcount(128)] // Max for this output type
         void geometry_lines_base(const point MeshData input[1], const uint primitive_id : SV_PrimitiveID, const uint instance : SV_GSInstanceID, inout LineStream<LinePoint> stream) {
             UNITY_SETUP_INSTANCE_ID(input[0]);
 
@@ -565,9 +576,10 @@ Shader "Lereldarion/Debug/Lighting" {
 
             // LV lights : 128 lights, 8 per instances (x32 = 128) by parallel batches of 32.
             // A batch can have heterogeneous types, but I cannot know their types in advance.
+            // This can exceed the max vertex count if all lights are active with the most expensive type.
             const uint point_light_volume_count = min((uint) _UdonPointLightVolumeCount, 128);
             [loop] for(uint light_id = instance; light_id < point_light_volume_count; light_id += 32) {
-                draw_vrc_light_volume_light(stream, light_id); // up to 7 vertex
+                draw_vrc_light_volume_light(stream, light_id); // up to 24 vertex
             }
         }
 
