@@ -14,7 +14,7 @@ Material:
   m_ValidKeywords: []
   m_InvalidKeywords: []
   m_LightmapFlags: 4
-  m_EnableInstancingVariants: 1
+  m_EnableInstancingVariants: 0
   m_DoubleSidedGI: 0
   m_CustomRenderQueue: -1
   stringTagMap: {}
@@ -27,6 +27,8 @@ Material:
     m_Floats:
     - _Distance_Limit: 10
     - _LightProbe_Radius: 0.05
+    - _Light_Radius: 0.2
     - _ReflectionProbe_Radius: 0.2
-    m_Colors: []
+    m_Colors:
+    - _ViewSpace_Anchor: {r: 0, g: 0, b: -1.5, a: 0}
   m_BuildTextureStacks: []

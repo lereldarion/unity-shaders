@@ -212,7 +212,7 @@ Shader "Lereldarion/Debug/Lighting" {
         ///////////////////////////////////////////////////////////////////////
         // Unity lighting gizmos
 
-        void unity_directional_light(inout LineStream<LinePoint> s, half3 color, float3 light_forward_ws) {
+        void draw_unity_directional_light(inout LineStream<LinePoint> s, half3 color, float3 light_forward_ws) {
             LineDrawer drawer = LineDrawer::init(color); // 10 calls
             float3x3 referential = referential_from_z(light_forward_ws);
 
@@ -232,7 +232,7 @@ Shader "Lereldarion/Debug/Lighting" {
             drawer.init_cs(s, origin_cs); drawer.solid_cs(s, tetrahedron_c); drawer.solid_cs(s, tetrahedron_a);
         }
 
-        void unity_pixel_point_light(inout LineStream<LinePoint> s, half3 color, float3 pos, float4x4 world_to_light) {
+        void draw_unity_pixel_point_light(inout LineStream<LinePoint> s, half3 color, float3 pos, float4x4 world_to_light) {
             LineDrawer drawer = LineDrawer::init(color); // 14 calls
             
             // Pixel point light : world to light is a nice matrix with rotation + scale + translation.
@@ -251,7 +251,7 @@ Shader "Lereldarion/Debug/Lighting" {
             drawer.init_ws(s, pos + mul(light_to_world, float3(-c, -c,  c))); drawer.solid_ws(s, pos + mul(light_to_world, float3( c,  c, -c)));
         }
 
-        void instanced_unity_vertex_point_light(inout LineStream<LinePoint> s, uint instance_0_6, half3 color, float3 pos, float attenuation) {
+        void draw_unity_vertex_point_light_instanced(inout LineStream<LinePoint> s, uint instance_0_6, half3 color, float3 pos, float attenuation) {
             LineDrawer drawer = LineDrawer::init(color); // 4 calls
             
             const float range = 5.0 * rsqrt(attenuation); // https://discussions.unity.com/t/point-light-in-v-f-shader/679554/10 Pema
@@ -267,7 +267,7 @@ Shader "Lereldarion/Debug/Lighting" {
             drawer.solid_ws(s, pos + axis_x * range);
         }
 
-        void unity_spot_light(inout LineStream<LinePoint> s, half3 color, float3 pos, float4x4 world_to_light) {
+        void draw_unity_spot_light(inout LineStream<LinePoint> s, half3 color, float3 pos, float4x4 world_to_light) {
             LineDrawer drawer = LineDrawer::init(color); // 20 vertexcount
 
             // W2L * (W.xyz, 1) = L.xyzw
@@ -301,37 +301,32 @@ Shader "Lereldarion/Debug/Lighting" {
             }
         }
 
-        void unity_reflection_probe(inout LineStream<LinePoint> s, half3 color, float3 position_ws, float3 bbox_min, float3 bbox_max) {
-            LineDrawer drawer = LineDrawer::init(color); // 21 calls
-            // With no defined reflection boxes, unity will use the skybox with infinite bounding boxes.
-            bool is_skybox = any(!isfinite(bbox_min));
-            if(is_skybox) {
+        void draw_unity_reflection_probe_instanced(inout LineStream<LinePoint> s, uint instance_0_4, half3 color, float3 position_ws, float3 bbox_min, float3 bbox_max) {
+            LineDrawer drawer = LineDrawer::init(color); // 6 calls
+            
+            // If not touched by a reflection probe, unity uses the skybox with infinite bounding boxes.
+            if(any(!isfinite(bbox_min))) {
+                // In that case just render 4 crossing diagonals
                 bbox_min = position_ws - _Distance_Limit;
                 bbox_max = position_ws + _Distance_Limit;
-            }
-            // Precompute center and 8 corners (x = +1, y = +2, z = +4)
-            float4 center = UnityWorldToClipPos(position_ws);
-            float dashes[8];
-            float4 corners[8];
-            for(uint i = 0; i < 8; i += 1) {
-                float3 corner = i & uint3(1, 2, 4) ? bbox_max : bbox_min;
-                dashes[i] = 10 * round(distance(corner, position_ws));
-                corners[i] = UnityWorldToClipPos(corner);
-            }
-            // Drawing
-            if(!is_skybox) {
-                // Draw cube and lines from corner to center. In one big line.
-                drawer.init_cs(s, center);
-                drawer.dashed_cs(s, corners[0], dashes[0]); drawer.solid_cs(s, corners[1]); drawer.solid_cs(s, corners[5]); drawer.solid_cs(s, corners[4]); drawer.dashed_cs(s, center, dashes[4]);
-                drawer.dashed_cs(s, corners[1], dashes[1]); drawer.solid_cs(s, corners[3]); drawer.solid_cs(s, corners[7]); drawer.solid_cs(s, corners[5]); drawer.dashed_cs(s, center, dashes[5]);
-                drawer.dashed_cs(s, corners[3], dashes[3]); drawer.solid_cs(s, corners[2]); drawer.solid_cs(s, corners[6]); drawer.solid_cs(s, corners[7]); drawer.dashed_cs(s, center, dashes[7]);
-                drawer.dashed_cs(s, corners[2], dashes[2]); drawer.solid_cs(s, corners[0]); drawer.solid_cs(s, corners[4]); drawer.solid_cs(s, corners[6]); drawer.dashed_cs(s, center, dashes[6]);
+                const float diagonal_dashes = 2 * 10 * round(_Distance_Limit * sqrt(3.));
+                drawer.init_ws(s, instance_0_4 & uint3(1, 2, 4) ? bbox_max : bbox_min);
+                drawer.dashed_ws(s, (~instance_0_4) & uint3(1, 2, 4) ? bbox_max : bbox_min, diagonal_dashes);
             } else {
-                // Just draw corner-center lines
-                drawer.init_cs(s, corners[0]); drawer.dashed_cs(s, corners[7], dashes[0] + dashes[7]);
-                drawer.init_cs(s, corners[1]); drawer.dashed_cs(s, corners[6], dashes[1] + dashes[6]);
-                drawer.init_cs(s, corners[2]); drawer.dashed_cs(s, corners[5], dashes[2] + dashes[5]);
-                drawer.init_cs(s, corners[3]); drawer.dashed_cs(s, corners[4], dashes[3] + dashes[4]);
+                // Draw bounding box and corner-center lines
+                // Each instance does a pair of corner-center lines (+z -z) + a C triplet of box edges in one loop
+                const float4 center = UnityWorldToClipPos(position_ws);
+                const float2 corners_circle_order[4] = { bbox_min.xy, float2(bbox_max.x, bbox_min.y), bbox_max.xy, float2(bbox_min.x, bbox_max.y) };
+
+                const float2 corner_xy = corners_circle_order[instance_0_4];
+                const float2 c_xy = corners_circle_order[(instance_0_4 + 1) & 0x3];
+
+                drawer.init_cs(s, center);
+                drawer.dashed_ws(s, float3(corner_xy, bbox_min.z), 10 * round(distance(position_ws, float3(corner_xy, bbox_min.z))));
+                drawer.solid_ws(s, float3(c_xy, bbox_min.z));
+                drawer.solid_ws(s, float3(c_xy, bbox_max.z));
+                drawer.solid_ws(s, float3(corner_xy, bbox_max.z));
+                drawer.dashed_cs(s, center, 10 * round(distance(position_ws, float3(corner_xy, bbox_max.z))));
             }
         }
         
@@ -510,69 +505,69 @@ Shader "Lereldarion/Debug/Lighting" {
         }
 
         [instance(32)]
-        [maxvertexcount(20 /*lv box*/ + 8 * 7 /*lv lights*/ + 4 /*vertex light*/ + 21 /*max(LTCGI, builtin)*/)] // Manually set from logic vertexcounts below
-        void geometry_lines_base(point MeshData input[1], uint primitive_id : SV_PrimitiveID, uint instance : SV_GSInstanceID, inout LineStream<LinePoint> stream) {
+        [maxvertexcount(100)] // Max is 128 for this output type
+        void geometry_lines_base(const point MeshData input[1], const uint primitive_id : SV_PrimitiveID, const uint instance : SV_GSInstanceID, inout LineStream<LinePoint> stream) {
             UNITY_SETUP_INSTANCE_ID(input[0]);
 
             if (!(_VRChatMirrorMode == 0 && primitive_id == 0 && within_distance_limit())) { return; }
 
             // Always try to spread items on all threads if possible
 
+            // Main directional light, which may be disabled.
+            const float3 directional_light_forward_ws = -_WorldSpaceLightPos0.xyz;
+            if(instance == 31 && length_sq(directional_light_forward_ws) > 0) {
+                draw_unity_directional_light(stream, _LightColor0.rgb, directional_light_forward_ws); // 10 vertex
+            }
+
+            if(instance < 8) {
+                // 2 Reflection probes
+                bool is_primary = instance < 4;
+                uint instance_0_4 = instance & 0x3;
+                #if defined(UNITY_SPECCUBE_BLENDING) || defined(FORCE_BOX_PROJECTION)
+                float blend_factor = is_primary ? unity_SpecCube0_BoxMin.w : 1 - unity_SpecCube0_BoxMin.w;
+                #else
+                float blend_factor = is_primary ? 1 : 0;
+                #endif
+                float3 position = is_primary ? unity_SpecCube0_ProbePosition.xyz : unity_SpecCube1_ProbePosition.xyz;
+                float3 bbox_min = is_primary ? unity_SpecCube0_BoxMin.xyz : unity_SpecCube1_BoxMin.xyz;
+                float3 bbox_max = is_primary ? unity_SpecCube0_BoxMax.xyz : unity_SpecCube1_BoxMax.xyz;
+                if (blend_factor > 0.00001) {
+                    draw_unity_reflection_probe_instanced(stream, instance_0_4, blend_factor.xxx, position, bbox_min, bbox_max); // 6 vertex
+                }
+            }
+
+            // 4 Vertex point lights, instanced to 6x4=24 threads [8, 32[
+            if(8 <= instance) {
+                uint instance_0_24 = instance - 8;
+                uint vertex_light_id = instance_0_24 / 6;
+                uint instance_0_6 = instance_0_24 - 6 * vertex_light_id;
+                half3 color = unity_LightColor[vertex_light_id].rgb;
+                if(any(color > 0)) {
+                    float3 position = float3(unity_4LightPosX0[vertex_light_id], unity_4LightPosY0[vertex_light_id], unity_4LightPosZ0[vertex_light_id]);
+                    draw_unity_vertex_point_light_instanced(stream, instance_0_6, color, position, unity_4LightAtten0[vertex_light_id]); // 4 vertex
+                }
+            }
+
+            // Worst vertex count : [0,24[@4, [24,31[@6, 31@14
+
             // LV boxes : 32 Volumes, 1 per instance.
             if(instance < min((uint) _UdonLightVolumeCount, 32)) {
                 draw_vrc_light_volume_boxes(stream, instance); // 20 vertex
             }
 
+            // 16 Screens, 1 per instance. Use [16, 32[ to spread vertex count.
+            if(16 <= instance) {
+                uint instance_0_16 = instance - 16;
+                draw_ltcgi_surface(stream, instance_0_16); // 10 vertex
+            }
+
+            // Worst vertex count : [0,16[@24, [16,24[@34, [24,31[@36, 31@44
+
             // LV lights : 128 lights, 8 per instances (x32 = 128) by parallel batches of 32.
             // A batch can have heterogeneous types, but I cannot know their types in advance.
-            uint point_light_volume_count = min((uint) _UdonPointLightVolumeCount, 128);
+            const uint point_light_volume_count = min((uint) _UdonPointLightVolumeCount, 128);
             [loop] for(uint light_id = instance; light_id < point_light_volume_count; light_id += 32) {
                 draw_vrc_light_volume_light(stream, light_id); // up to 7 vertex
-            }
-
-            // 4 Vertex point lights, instanced to 6x4=24 threads
-            if(instance < 24) {
-                uint vertex_light_id = instance / 6;
-                uint instance_0_6 = instance - 6 * vertex_light_id;
-                half3 color = unity_LightColor[vertex_light_id].rgb;
-                if(any(color > 0)) {
-                    float3 position = float3(unity_4LightPosX0[vertex_light_id], unity_4LightPosY0[vertex_light_id], unity_4LightPosZ0[vertex_light_id]);
-                    instanced_unity_vertex_point_light(stream, instance_0_6, color, position, unity_4LightAtten0[vertex_light_id]); // 4 vertex
-                }
-            }
-
-            // 16 Screens, 1 per instance for first 16.
-            draw_ltcgi_surface(stream, instance); // 10 vertex
-
-            // Spread remaining stuff vertex count on last threads. They are likely to use less vertex count.
-            // Does not fix divergence.
-            [forcecase]
-            switch (instance) {
-                case 31: {
-                    // Main directional light, which may be disabled
-                    float3 light_forward_ws = -_WorldSpaceLightPos0.xyz;
-                    if(length_sq(light_forward_ws) > 0) {
-                        unity_directional_light(stream, _LightColor0.rgb, light_forward_ws); // 10 vertex
-                    }
-                    break;
-                }
-                case 30: case 29: {
-                    // Reflection probes : 21 vertex
-                    bool is_primary = instance == 30;
-                    #if defined(UNITY_SPECCUBE_BLENDING) || defined(FORCE_BOX_PROJECTION)
-                    float blend_factor = is_primary ? unity_SpecCube0_BoxMin.w : 1 - unity_SpecCube0_BoxMin.w;
-                    #else
-                    float blend_factor = is_primary ? 1 : 0;
-                    #endif
-                    float3 position = is_primary ? unity_SpecCube0_ProbePosition.xyz : unity_SpecCube1_ProbePosition.xyz;
-                    float3 bbox_min = is_primary ? unity_SpecCube0_BoxMin.xyz : unity_SpecCube1_BoxMin.xyz;
-                    float3 bbox_max = is_primary ? unity_SpecCube0_BoxMax.xyz : unity_SpecCube1_BoxMax.xyz;
-                    if (blend_factor > 0.00001) {
-                        unity_reflection_probe(stream, blend_factor.xxx, position, bbox_min, bbox_max); // 21 vertex
-                    }
-                    break;
-                }
-                default: break;
             }
         }
 
@@ -584,11 +579,11 @@ Shader "Lereldarion/Debug/Lighting" {
             
             // Not worth instancing, too heterogeneous and small
             #if defined(POINT) || defined(POINT_COOKIE)
-            unity_pixel_point_light(stream, _LightColor0.rgb, _WorldSpaceLightPos0.xyz, unity_WorldToLight); // 14 vertex
+            draw_unity_pixel_point_light(stream, _LightColor0.rgb, _WorldSpaceLightPos0.xyz, unity_WorldToLight); // 14 vertex
             #elif defined(DIRECTIONAL) || defined(DIRECTIONAL_COOKIE)
-            unity_directional_light(stream, _LightColor0.rgb, -_WorldSpaceLightPos0.xyz); // 10 vertex
+            draw_unity_directional_light(stream, _LightColor0.rgb, -_WorldSpaceLightPos0.xyz); // 10 vertex
             #elif defined(SPOT)
-            unity_spot_light(stream, _LightColor0.rgb, _WorldSpaceLightPos0.xyz, unity_WorldToLight); // 20 vertex
+            draw_unity_spot_light(stream, _LightColor0.rgb, _WorldSpaceLightPos0.xyz, unity_WorldToLight); // 20 vertex
             #endif
         }
 
@@ -597,7 +592,7 @@ Shader "Lereldarion/Debug/Lighting" {
 
         static const uint sphere_subdivision = 4;
 
-        void instanced_draw_sphere(inout TriangleStream<Sphere> stream, Sphere sphere, uint instance, float3 center, float radius, float4 rotation) {
+        void draw_sphere_instanced(inout TriangleStream<Sphere> stream, uint instance, Sphere sphere, float3 center, float radius, float4 rotation) {
             // nb instances = 6 * sphere_subdivision
             // 6 faces, <subdiv> strips of <subdiv> quads for a cube-topology sphere.
             uint face_id = instance / sphere_subdivision; // [0, 6[
@@ -621,12 +616,12 @@ Shader "Lereldarion/Debug/Lighting" {
                 stream.Append(sphere);
             }
         }
-        void instanced_draw_sphere(inout TriangleStream<Sphere> stream, uint mode, uint instance_0_24, float3 center, float radius) {
+        void draw_sphere_instanced(inout TriangleStream<Sphere> stream, uint instance, uint mode, float3 center, float radius) {
             Sphere sphere;
             UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(sphere);
             sphere.mode = mode;
             sphere.spot_tan_angle = 0;
-            instanced_draw_sphere(stream, sphere, instance_0_24, center, radius, float4(0, 0, 0, 1));
+            draw_sphere_instanced(stream, instance, sphere, center, radius, float4(0, 0, 0, 1));
         }
 
         uniform Texture2DArray _UdonPointLightVolumeTexture;
@@ -680,13 +675,13 @@ Shader "Lereldarion/Debug/Lighting" {
             if (!(_VRChatMirrorMode == 0 && primitive_id == 0 && within_distance_limit())) { return; }
 
             if(_LightProbe_Radius > 0) {
-                instanced_draw_sphere(stream, 0, instance, item_anchor_point_ws(), _LightProbe_Radius); // Light Probe
+                draw_sphere_instanced(stream, instance, 0, item_anchor_point_ws(), _LightProbe_Radius); // Light Probe
             }
             if(_ReflectionProbe_Radius > 0) {
-                instanced_draw_sphere(stream, 1, instance, unity_SpecCube0_ProbePosition, _ReflectionProbe_Radius);
+                draw_sphere_instanced(stream, instance, 1, unity_SpecCube0_ProbePosition, _ReflectionProbe_Radius);
                 #if defined(UNITY_SPECCUBE_BLENDING) || defined(FORCE_BOX_PROJECTION)
                 [branch] if (unity_SpecCube0_BoxMin.w < 0.99999) {
-                    instanced_draw_sphere(stream, 2, instance, unity_SpecCube1_ProbePosition, _ReflectionProbe_Radius);
+                    draw_sphere_instanced(stream, instance, 2, unity_SpecCube1_ProbePosition, _ReflectionProbe_Radius);
                 }
                 #endif
             }
@@ -711,7 +706,7 @@ Shader "Lereldarion/Debug/Lighting" {
                         sphere.mode = 4 | (texture_id << 3);
                         sphere.spot_tan_angle = 0;
                     }
-                    instanced_draw_sphere(stream, sphere, instance, position.xyz, _Light_Radius, float4(rotation.xyz, -rotation.w));
+                    draw_sphere_instanced(stream, instance, sphere, position.xyz, _Light_Radius, float4(rotation.xyz, -rotation.w));
                 }
             }
         }
