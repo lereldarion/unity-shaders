@@ -364,7 +364,7 @@ Shader "Lereldarion/Debug/Lighting" {
         void draw_vrc_light_volume_boxes(inout LineStream<LinePoint> s, uint volume_id) {            
             // Select a color for the volume ; hue shift gradient from red.
             half3 color = hue_shift_yiq(half3(1, 0, 0), volume_id / _UdonLightVolumeCount * UNITY_TWO_PI);
-            LineDrawer drawer = LineDrawer::init(color); // 20 calls
+            LineDrawer drawer = LineDrawer::init(color); // 16 calls
             
             // Project bounds to CS
             float4x4 volume_to_world = inverse(_UdonLightVolumeInvWorldMatrix[volume_id]);
@@ -604,7 +604,7 @@ Shader "Lereldarion/Debug/Lighting" {
 
             // LV boxes : 32 Volumes, 1 per instance.
             if(instance < min((uint) _UdonLightVolumeCount, 32)) {
-                draw_vrc_light_volume_boxes(stream, instance); // 20 vertex
+                draw_vrc_light_volume_boxes(stream, instance); // 16 vertex
             }
 
             // 16 Screens, 1 per instance. Use [16, 32[ to spread vertex count.
@@ -613,7 +613,7 @@ Shader "Lereldarion/Debug/Lighting" {
                 draw_ltcgi_surface(stream, instance_0_16); // 10 vertex
             }
 
-            // Worst vertex count : [0,16[@24, [16,24[@34, [24,31[@36, 31@44
+            // Worst vertex count : [0,16[@20, [16,24[@30, [24,31[@32, 31@40
 
             // LV lights : 128 lights, 8 per instances (x32 = 128) by parallel batches of 32.
             // A batch can have heterogeneous types, but I cannot know their types in advance.
