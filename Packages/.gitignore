@@ -1,9 +1,0 @@
-/*/
-!com.vrchat.core.*/
-
-manifest.json
-packages-lock.json
-vpm-manifest.json
-
-# Change this to match your new package name
-!lereldarion.unity-shaders
