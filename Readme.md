@@ -5,8 +5,6 @@ Install using VCC at https://lereldarion.github.io/vpm-listing/.
 
 Install from Unity Packages from [releases](https://github.com/lereldarion/unity-shaders/releases).
 
-Shader code is at [Packages/lereldarion.unity-shaders](https://github.com/lereldarion/unity-shaders/tree/main/Packages/lereldarion.unity-shaders) due to the folder structure of the VPM package template.
-
 ## Overlays
 These overlay shaders are useful on avatars for world analysis (wireframe, normals, HUD), or adjusting lighting (GammaAdjust).
 
