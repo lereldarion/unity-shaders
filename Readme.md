@@ -1,9 +1,12 @@
 # Lereldarion Unity Shaders
-Collection of useful Unity Shaders, made for VRChat, but not dependent on its SDK.
+Collection of useful Unity Shaders, made for VRChat.
+They are not dependent on its SDK but some features rely on [VRChat shader globals](https://creators.vrchat.com/worlds/udon/vrc-graphics/vrchat-shader-globals/).
 
-Install using VCC at https://lereldarion.github.io/vpm-listing/.
+Install :
+- using VCC at https://lereldarion.github.io/vpm-listing/.
+- or from Unity Packages from [releases](https://github.com/lereldarion/unity-shaders/releases).
 
-Install from Unity Packages from [releases](https://github.com/lereldarion/unity-shaders/releases).
+[Github repository](https://github.com/lereldarion/unity-shaders/) in case you found this documentation from an installed package.
 
 ## Overlays
 These overlay shaders are useful on avatars for world analysis (wireframe, normals, HUD), or adjusting lighting (GammaAdjust).
@@ -65,7 +68,10 @@ This shader requires a texture for the digits, but due to the SDF strategy it on
 
 ![](.github/overlay_hud.jpg)
 
-## Debug Lighting
+## Debug tools
+Other debug / introspection tools which are not overlays
+
+### Lighting
 Apply to any mesh (only 1 vertex required), and it will display lighting configuration elements that touch the mesh renderer as gizmos in the world :
 - Unity realtime lights : pixel directional / point / spot lights, vertex point lights, colored by the light color.
 - Unity reflection probes : displays the bounding boxes and their center, with a sphere to show the raw cubemap. Color of the lines shows the blend factor when 2 probes are active.
@@ -77,7 +83,7 @@ Apply to any mesh (only 1 vertex required), and it will display lighting configu
 
 ![](.github/debug_lighting.png)
 
-## Debug TBN
+### TBN
 Applied to mesh, this shaders displays the tangent space at each vertex as small 3D lines.
 
 ![](.github/debug_tbn.png)
