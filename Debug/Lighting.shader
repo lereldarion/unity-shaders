@@ -234,8 +234,8 @@ Shader "Lereldarion/Debug/Lighting" {
             drawer.init_cs(s, origin_cs); drawer.solid_cs(s, tetrahedron_c); drawer.solid_cs(s, tetrahedron_a);
         }
 
-        void draw_unity_pixel_point_light_instanced(inout LineStream<LinePoint> s, uint instance_0_8, half3 color, float3 pos, float4x4 world_to_light) {
-            LineDrawer drawer = LineDrawer::init(color); // 10 calls
+        void draw_unity_pixel_point_light_instanced(inout LineStream<LinePoint> s, uint instance_0_10, half3 color, float3 pos, float4x4 world_to_light) {
+            LineDrawer drawer = LineDrawer::init(color); // 7 calls
             
             // Pixel point light : world to light is a nice matrix with rotation + scale + translation.
             // Only use inverse for scale + rotation, as we have the center separately. Cheaper math.
@@ -245,29 +245,37 @@ Shader "Lereldarion/Debug/Lighting" {
             const float range = length(mul(light_to_world, float3(1, 0, 0)));
             const float gizmo_radius = min(_Light_Radius / range, _Minimum_Gizmo_To_Range_Ratio);
 
-            // Draw a central octahedron and 6 axis-aligned rays from each corner.
-            if(instance_0_8 < 6) {
-                const uint instance_0_6 = instance_0_8;
-                const uint instance_0_3 = instance_0_6 >= 3 ? instance_0_6 - 3 : instance_0_6;
-                const float direction = instance_0_6 >= 3 ? -1 : 1;
-                float3 axis_x = mul(light_to_world, uint3(0, 1, 2) == instance_0_3 ? direction : 0);
-                float3 axis_y = mul(light_to_world, uint3(2, 0, 1) == instance_0_3 ? direction : 0);
-                drawer.init_ws(s, pos - axis_x * gizmo_radius);
-                drawer.solid_ws(s, pos + axis_y * gizmo_radius);
-                drawer.solid_ws(s, pos + axis_x * gizmo_radius);
-                drawer.solid_ws(s, pos + axis_x);
+            // Draw a central icosahedron with 12 rays from corners
+            static const float3 ring_corners[5] = {
+                // Upper ring. https://math.stackexchange.com/questions/2174594/co-ordinates-of-the-vertices-an-icosahedron-relative-to-its-centroid
+                float3(1 / sqrt(5), 2 / sqrt(5), 0),
+                float3(1 / sqrt(5), (5 - sqrt(5)) / 10, sqrt((5 + sqrt(5)) / 10)),
+                float3(1 / sqrt(5), (-5 - sqrt(5)) / 10, sqrt((5 - sqrt(5)) / 10)),
+                float3(1 / sqrt(5), (-5 - sqrt(5)) / 10, -sqrt((5 - sqrt(5)) / 10)),
+                float3(1 / sqrt(5), (5 - sqrt(5)) / 10, -sqrt((5 + sqrt(5)) / 10)),
+                // Lower ring by -ring_corners[i]
+                // Poles at (+/-1, 0, 0)
+            };
+            
+            const bool upper_instance = instance_0_10 >= 5;
+            const uint instance_0_5 = upper_instance ? instance_0_10 - 5 : instance_0_10;
+            const float3 pole_dir_ws = mul(light_to_world, float3(upper_instance ? -1 : 1, 0, 0));
+            const float3 corner_dir_ws = mul(light_to_world, (upper_instance ? -1 : 1) * ring_corners[instance_0_5]);
+
+            // Ray, corner, pole, maybe pole ray for one instance
+            drawer.init_ws(s, pos + corner_dir_ws);
+            drawer.solid_ws(s, pos + gizmo_radius * corner_dir_ws);
+            drawer.solid_ws(s, pos + gizmo_radius * pole_dir_ws);
+            if(instance_0_5 == 0) {
+                drawer.solid_ws(s, pos + pole_dir_ws);
             }
 
-            // For each octahedron facets, make it a tetrahedron with central point + ray
-            float3 facet_corner = instance_0_8 & uint3(1, 2, 4) ? -1 : 1;
-            float3 facet_ray_ws = mul(light_to_world, facet_corner * rsqrt(3));
-            float4 facet_corner_at_radius_cs = UnityWorldToClipPos(pos + facet_ray_ws * gizmo_radius * 0.75 /*arbitrary factor to look good*/);
-            drawer.init_ws(s, pos + mul(light_to_world, float3(facet_corner.x * gizmo_radius, 0, 0)));
-            drawer.solid_cs(s, facet_corner_at_radius_cs);
-            drawer.solid_ws(s, pos + mul(light_to_world, float3(0, facet_corner.y * gizmo_radius, 0)));
-            drawer.init_ws(s, pos + mul(light_to_world, float3(0, 0, facet_corner.z * gizmo_radius)));
-            drawer.solid_cs(s, facet_corner_at_radius_cs);
-            drawer.solid_ws(s, pos + facet_ray_ws);
+            // Ring and link to other ring
+            const float3 next_corner_ws = mul(light_to_world, (upper_instance ? -1 : 1) * ring_corners[instance_0_5 == 4 ? 0 : instance_0_5 + 1]);
+            const float3 other_ring_ws = mul(light_to_world, (upper_instance ? 1 : -1) * ring_corners[instance_0_5 < 3 ? instance_0_5 + 2 : instance_0_5 - 3]);
+            drawer.init_ws(s, pos + gizmo_radius * next_corner_ws);
+            drawer.solid_ws(s, pos + gizmo_radius * corner_dir_ws);
+            drawer.solid_ws(s, pos + gizmo_radius * other_ring_ws);
         }
 
         void draw_unity_vertex_point_light_instanced(inout LineStream<LinePoint> s, uint instance_0_6, half3 color, float3 pos, float attenuation) {
@@ -629,7 +637,7 @@ Shader "Lereldarion/Debug/Lighting" {
             }
         }
 
-        [instance(8)]
+        [instance(10)]
         [maxvertexcount(10)]
         void geometry_lines_add(const point MeshData input[1], const uint primitive_id : SV_PrimitiveID, const uint instance : SV_GSInstanceID, inout LineStream<LinePoint> stream) {
             UNITY_SETUP_INSTANCE_ID(input[0]);
