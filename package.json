@@ -1,14 +1,17 @@
 {
   "name": "lereldarion.unity-shaders",
   "displayName": "Lereldarion Unity Shaders",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "Collection of useful shaders, made for VRChat",
   "author": {
     "name": "Lereldarion",
-    "url": "https://github.com/lereldarion/unity-shaders"
+    "url": "https://github.com/lereldarion/"
   },
+  "documentationUrl": "https://github.com/lereldarion/unity-shaders",
   "keywords": [
-    "shaders"
+    "shaders",
+    "overlay",
+    "debug"
   ],
   "license": "MIT",
   "unity": "2019.4"
