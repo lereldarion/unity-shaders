@@ -6,7 +6,7 @@
 // 
 // Unity gizmos use solid lines :
 // - Directional lights : directional arrow, in front of camera. Color is light color.
-// - Pixel point lights : 14 rays from light center (axis-aligned + diagonals) + center octahedron. Color is light color.
+// - Pixel point lights : 12 rays from light center + center icosahedron. Color is light color.
 // - Vertex point lights : 6 rays from light center (axis-aligned) + center octahedron. Color is light color.
 // - Spot light : cone boundary as octagonal pyramid, + central cone. Color is light color.
 // - Light probes : indirect diffuse shading on a sphere in front of camera.
