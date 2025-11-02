@@ -29,6 +29,7 @@ Shader "Lereldarion/Debug/Lighting" {
         _LightProbe_Radius ("Light Probe sphere radius", Float) = 0.05
         _ReflectionProbe_Radius ("Reflection Probe sphere radius", Float) = 0.2
         _Light_Radius ("Radius of light center gizmos (sphere cookie, octahedron, ...)", Float) = 0.2
+        _Minimum_Gizmo_To_Range_Ratio ("Reduce gizmo radius of short-ranged lights to keep this size ratio", Range(0, 1)) = 0.5
     }
     SubShader {
         Tags {
@@ -51,6 +52,7 @@ Shader "Lereldarion/Debug/Lighting" {
         uniform float _LightProbe_Radius;
         uniform float _ReflectionProbe_Radius;
         uniform float _Light_Radius;
+        uniform float _Minimum_Gizmo_To_Range_Ratio;
 
         ///////////////////////////////////////////////////////////////////////
         // Structs
@@ -240,7 +242,8 @@ Shader "Lereldarion/Debug/Lighting" {
             const float3x3 light_to_world = (float3x3) inverse(world_to_light);
 
             // Light space unit vectors are culling distances
-            const float light_radius = _Light_Radius / length(mul(light_to_world, float3(1, 0, 0)));
+            const float range = length(mul(light_to_world, float3(1, 0, 0)));
+            const float gizmo_radius = min(_Light_Radius / range, _Minimum_Gizmo_To_Range_Ratio);
 
             // Draw a central octahedron and 6 axis-aligned rays from each corner.
             if(instance_0_8 < 6) {
@@ -249,20 +252,20 @@ Shader "Lereldarion/Debug/Lighting" {
                 const float direction = instance_0_6 >= 3 ? -1 : 1;
                 float3 axis_x = mul(light_to_world, uint3(0, 1, 2) == instance_0_3 ? direction : 0);
                 float3 axis_y = mul(light_to_world, uint3(2, 0, 1) == instance_0_3 ? direction : 0);
-                drawer.init_ws(s, pos - axis_x * light_radius);
-                drawer.solid_ws(s, pos + axis_y * light_radius);
-                drawer.solid_ws(s, pos + axis_x * light_radius);
+                drawer.init_ws(s, pos - axis_x * gizmo_radius);
+                drawer.solid_ws(s, pos + axis_y * gizmo_radius);
+                drawer.solid_ws(s, pos + axis_x * gizmo_radius);
                 drawer.solid_ws(s, pos + axis_x);
             }
 
             // For each octahedron facets, make it a tetrahedron with central point + ray
             float3 facet_corner = instance_0_8 & uint3(1, 2, 4) ? -1 : 1;
             float3 facet_ray_ws = mul(light_to_world, facet_corner * rsqrt(3));
-            float4 facet_corner_at_radius_cs = UnityWorldToClipPos(pos + facet_ray_ws * light_radius * 0.75 /*arbitrary factor to look good*/);
-            drawer.init_ws(s, pos + mul(light_to_world, float3(facet_corner.x * light_radius, 0, 0)));
+            float4 facet_corner_at_radius_cs = UnityWorldToClipPos(pos + facet_ray_ws * gizmo_radius * 0.75 /*arbitrary factor to look good*/);
+            drawer.init_ws(s, pos + mul(light_to_world, float3(facet_corner.x * gizmo_radius, 0, 0)));
             drawer.solid_cs(s, facet_corner_at_radius_cs);
-            drawer.solid_ws(s, pos + mul(light_to_world, float3(0, facet_corner.y * light_radius, 0)));
-            drawer.init_ws(s, pos + mul(light_to_world, float3(0, 0, facet_corner.z * light_radius)));
+            drawer.solid_ws(s, pos + mul(light_to_world, float3(0, facet_corner.y * gizmo_radius, 0)));
+            drawer.init_ws(s, pos + mul(light_to_world, float3(0, 0, facet_corner.z * gizmo_radius)));
             drawer.solid_cs(s, facet_corner_at_radius_cs);
             drawer.solid_ws(s, pos + facet_ray_ws);
         }
@@ -270,15 +273,16 @@ Shader "Lereldarion/Debug/Lighting" {
         void draw_unity_vertex_point_light_instanced(inout LineStream<LinePoint> s, uint instance_0_6, half3 color, float3 pos, float attenuation) {
             LineDrawer drawer = LineDrawer::init(color); // 4 calls
             const float range = 5.0 * rsqrt(attenuation); // https://discussions.unity.com/t/point-light-in-v-f-shader/679554/10 Pema
+            const float gizmo_radius = min(_Light_Radius, _Minimum_Gizmo_To_Range_Ratio * range);
 
             // Draw a central octahedron and 6 axis-aligned rays from each corner.
             const uint instance_0_3 = instance_0_6 >= 3 ? instance_0_6 - 3 : instance_0_6;
             const float direction = instance_0_6 >= 3 ? -1 : 1;
             float3 axis_x = uint3(0, 1, 2) == instance_0_3 ? direction : 0;
             float3 axis_y = uint3(2, 0, 1) == instance_0_3 ? direction : 0;
-            drawer.init_ws(s, pos - axis_x * _Light_Radius);
-            drawer.solid_ws(s, pos + axis_y * _Light_Radius);
-            drawer.solid_ws(s, pos + axis_x * _Light_Radius);
+            drawer.init_ws(s, pos - axis_x * gizmo_radius);
+            drawer.solid_ws(s, pos + axis_y * gizmo_radius);
+            drawer.solid_ws(s, pos + axis_x * gizmo_radius);
             drawer.solid_ws(s, pos + axis_x * range);
         }
 
@@ -318,10 +322,10 @@ Shader "Lereldarion/Debug/Lighting" {
             drawer.solid_ws(s, cone_base_2_ws);
 
             // Octahedron at _Light_Radius
-            const float ratio = _Light_Radius / length(cone_base_0_ws - cone_point_ws);
-            drawer.init_ws( s, lerp(cone_point_ws, cone_base_0_ws, ratio));
-            drawer.solid_ws(s, lerp(cone_point_ws, cone_base_1_ws, ratio));
-            drawer.solid_ws(s, lerp(cone_point_ws, cone_base_2_ws, ratio));
+            const float gizmo_ratio = min(_Light_Radius / length(cone_base_0_ws - cone_point_ws), _Minimum_Gizmo_To_Range_Ratio);
+            drawer.init_ws( s, lerp(cone_point_ws, cone_base_0_ws, gizmo_ratio));
+            drawer.solid_ws(s, lerp(cone_point_ws, cone_base_1_ws, gizmo_ratio));
+            drawer.solid_ws(s, lerp(cone_point_ws, cone_base_2_ws, gizmo_ratio));
         }
 
         void draw_unity_reflection_probe_instanced(inout LineStream<LinePoint> s, uint instance_0_4, half3 color, float3 position_ws, float3 bbox_min, float3 bbox_max) {
@@ -440,36 +444,37 @@ Shader "Lereldarion/Debug/Lighting" {
                 drawer.dashed_ws(s, position.xyz + corners_ws[3], culling_distance);
 
                 // Small square at _Light_Radius
-                const float ratio = _Light_Radius / culling_distance;
-                const float4 ring_0_cs = UnityWorldToClipPos(position.xyz + ratio * corners_ws[0]);
+                const float gizmo_ratio = min(_Light_Radius / culling_distance, _Minimum_Gizmo_To_Range_Ratio);
+                const float4 ring_0_cs = UnityWorldToClipPos(position.xyz + gizmo_ratio * corners_ws[0]);
                 drawer.init_cs(s, ring_0_cs);
-                drawer.solid_ws(s, position.xyz + ratio * corners_ws[1]);
-                drawer.solid_ws(s, position.xyz + ratio * corners_ws[2]);
-                drawer.solid_ws(s, position.xyz + ratio * corners_ws[3]);
+                drawer.solid_ws(s, position.xyz + gizmo_ratio * corners_ws[1]);
+                drawer.solid_ws(s, position.xyz + gizmo_ratio * corners_ws[2]);
+                drawer.solid_ws(s, position.xyz + gizmo_ratio * corners_ws[3]);
                 drawer.solid_cs(s, ring_0_cs);
 
             } else if (color.w <= 1.5f) {
                 // point light : 24 vertex count
                 // rotation quaternion is not updated if no cookie, fine by me
+                const float gizmo_radius = min(_Light_Radius, _Minimum_Gizmo_To_Range_Ratio * culling_distance);
                 
                 // Draw a central octahedron and 6 axis-aligned rays from each corner. Rays are dashed compared to vertex light.
-                float4 corners_cs[6] = {
-                    UnityWorldToClipPos(position.xyz - referential[0] * _Light_Radius),
-                    UnityWorldToClipPos(position.xyz - referential[1] * _Light_Radius),
-                    UnityWorldToClipPos(position.xyz - referential[2] * _Light_Radius),
-                    UnityWorldToClipPos(position.xyz + referential[0] * _Light_Radius),
-                    UnityWorldToClipPos(position.xyz + referential[1] * _Light_Radius),
-                    UnityWorldToClipPos(position.xyz + referential[2] * _Light_Radius),
+                const float4 corners_cs[6] = {
+                    UnityWorldToClipPos(position.xyz - referential[0] * gizmo_radius),
+                    UnityWorldToClipPos(position.xyz - referential[1] * gizmo_radius),
+                    UnityWorldToClipPos(position.xyz - referential[2] * gizmo_radius),
+                    UnityWorldToClipPos(position.xyz + referential[0] * gizmo_radius),
+                    UnityWorldToClipPos(position.xyz + referential[1] * gizmo_radius),
+                    UnityWorldToClipPos(position.xyz + referential[2] * gizmo_radius),
                 };
                 for(uint i = 0; i < 3; i += 1) {
                     drawer.init_cs(s, corners_cs[i]);
                     drawer.solid_cs(s, corners_cs[(i + 1) % 3]);
                     drawer.solid_cs(s, corners_cs[3 + i]);
-                    drawer.dashed_ws(s, position.xyz + referential[i] * culling_distance, culling_distance - _Light_Radius);
+                    drawer.dashed_ws(s, position.xyz + referential[i] * culling_distance, culling_distance - gizmo_radius);
                     drawer.init_cs(s, corners_cs[3 + i]);
                     drawer.solid_cs(s, corners_cs[3 + (i + 1) % 3]);
                     drawer.solid_cs(s, corners_cs[i]);
-                    drawer.dashed_ws(s, position.xyz - referential[i] * culling_distance, culling_distance - _Light_Radius);
+                    drawer.dashed_ws(s, position.xyz - referential[i] * culling_distance, culling_distance - gizmo_radius);
                 }
             } else {
                 // area light : 7 vertex count
