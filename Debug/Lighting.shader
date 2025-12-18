@@ -62,6 +62,7 @@ Shader "Lereldarion/Debug/Lighting" {
         };
         
         struct LinePoint {
+            // 9 words in SPS-I
             float4 position : SV_POSITION;
             half3 color : LINE_COLOR;
             float dash : DASH;
@@ -69,6 +70,7 @@ Shader "Lereldarion/Debug/Lighting" {
         };
 
         struct Sphere {
+            // 10 words in SPS-I
             float4 position : SV_POSITION;
             float3 normal : NORMAL_UVW;
             float spot_tan_angle : SPOT_TAN_ANGLE;
@@ -570,7 +572,7 @@ Shader "Lereldarion/Debug/Lighting" {
         }
 
         [instance(32)]
-        [maxvertexcount(128)] // Max for this output type
+        [maxvertexcount(113)] // 1024 max / 9 = 113.77
         void geometry_lines_base(const point MeshData input[1], const uint primitive_id : SV_PrimitiveID, const uint instance : SV_GSInstanceID, inout LineStream<LinePoint> stream) {
             UNITY_SETUP_INSTANCE_ID(input[0]);
 
@@ -739,7 +741,7 @@ Shader "Lereldarion/Debug/Lighting" {
         }
 
         [instance(6 /*faces*/ * sphere_subdivision)]
-        [maxvertexcount(((sphere_subdivision + 1) * 2) /*1 strip*/ * (3 /*unity spheres*/ + 8 /*max LV spheres*/))]
+        [maxvertexcount(((sphere_subdivision + 1) * 2) /*1 strip*/ * (3 /*unity spheres*/ + 7 /*max LV spheres*/))] // 1024 max / 10 = 102.4, limit to 100
         void geometry_triangles_base(point MeshData input[1], uint primitive_id : SV_PrimitiveID, uint instance : SV_GSInstanceID, inout TriangleStream<Sphere> stream) {
             UNITY_SETUP_INSTANCE_ID(input[0]);
 
