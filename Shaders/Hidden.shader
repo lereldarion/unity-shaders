@@ -11,13 +11,21 @@ Shader "Lereldarion/Hidden" {
             "RenderType" = "Opaque"
             "Queue" = "Geometry"
             "VRCFallback" = "Hidden"
+            "IgnoreProjector" = "True"
         }
         
         ZTest Never
         ZWrite Off
 
         Pass {
+            Tags {
+                "LightMode" = "Always" // Used for the pass disabling trick https://github.com/d4rkc0d3r/UnityAndVRChatQuirks?tab=readme-ov-file#skipping-draw-call-for-material-slot
+            }
+
             CGPROGRAM
+            #pragma warning (error : 3205) // implicit precision loss
+            #pragma warning (error : 3206) // implicit truncation
+            
             #pragma target 5.0
             #pragma vertex vertex_stage
             #pragma fragment fragment_stage
@@ -32,9 +40,11 @@ Shader "Lereldarion/Hidden" {
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
+            static const float nan = asfloat(uint(-1)); // 0xFFF...FFF should be a quiet NaN
+
             void vertex_stage (VertexInput input, out FragmentInput output) {
                 UNITY_SETUP_INSTANCE_ID(input);
-                output.position = float4(2., 2., 2., 1.); // Outside of clip space
+                output.position = nan.xxxx;
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
             }
 

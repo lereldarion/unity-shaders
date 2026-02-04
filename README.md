@@ -90,6 +90,10 @@ Applied to mesh, this shaders displays the tangent space at each vertex as small
 ![](.github/debug_tbn.png)
 
 ## Hidden
-Material that does not render the triangles.
+Material that does not render anything.
 
 This is useful to fill material slots that cannot be disabled by animators on avatars (skinned mesh slots).
+
+This shader comes with a material configured to use the [Material.SetShaderPassEnabled](https://docs.unity3d.com/ScriptReference/Material.SetShaderPassEnabled.html) trick by d4rkpl4y3r (https://github.com/d4rkc0d3r/UnityAndVRChatQuirks?tab=readme-ov-file#skipping-draw-call-for-material-slot).
+If this is used properly, the material does not generate any draw call.
+As a fallback, this sets the clip space positions to `NaN` to discard all geometry.
