@@ -92,12 +92,12 @@ Shader "Lereldarion/Overlay/Wireframe" {
             // unity_MatrixInvP is not provided in BIRP. unity_CameraInvProjection is only the basic camera projection (no VR components).
             // Using d4rkpl4y3r technique of patching unity_CameraInvProjection (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
             struct DepthReconstruction {
-                float3 sv_position;
+                float2 pixel_position;
                 float4x4 cs_to_vs;
 
                 static DepthReconstruction init(float4 fragment_sv_position) {
                     DepthReconstruction o;
-                    o.sv_position = fragment_sv_position.xyz; // xy is screen pixel pos
+                    o.pixel_position = fragment_sv_position.xy;
 
                     float4x4 flipZ = float4x4(1, 0, 0, 0,
                                             0, 1, 0, 0,
@@ -126,7 +126,7 @@ Shader "Lereldarion/Overlay/Wireframe" {
                 }
                 
                 float3 position_vs(float2 pixel_shift) {
-                    float2 shifted_sv_position = sv_position.xy + pixel_shift;
+                    float2 shifted_sv_position = pixel_position + pixel_shift;
                     // HLSLSupport.hlsl : DepthTexture is a TextureArray in SPS-I, so its size should be safe to use to get uvs.
                     float2 depth_texture_uv = shifted_sv_position * _CameraDepthTexture_TexelSize.xy;
                     float raw = SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(depth_texture_uv, 0, 0)); // [0,1]
