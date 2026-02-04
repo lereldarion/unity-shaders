@@ -8,6 +8,7 @@ Shader "Lereldarion/Overlay/GammaAdjust" {
     Properties {
         [Header(Gamma)]
         _Gamma_Adjust_Value("Gamma Adjust Value", Range(-5, 5)) = 0
+        [ToggleUI] _Transmit_Emission("Keep pixel values above 1 (emisison / bloom)", Float) = 1
 
         [Header(Overlay)]
         [ToggleUI] _Overlay_Fullscreen("Force Screenspace Fullscreen", Float) = 0
@@ -74,14 +75,15 @@ Shader "Lereldarion/Overlay/GammaAdjust" {
                 output.gamma = exp(_Gamma_Adjust_Value); // exp(3 * (0.3 - _Gamma_Adjust_Value));
             }
             
-            uniform sampler2D _GammaAdjustGrabTexture;
+            uniform float _Transmit_Emission;
+            UNITY_DECLARE_TEX2D(_GammaAdjustGrabTexture);
 
             fixed4 fragment_stage (FragmentInput i) : SV_Target {
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(i);
 
-                fixed4 scene_color = tex2Dproj(_GammaAdjustGrabTexture, i.grab_screen_pos); // FIXME convert to DX11 sampler without mipmap
+                fixed4 scene_color = UNITY_SAMPLE_TEX2D_LOD(_GammaAdjustGrabTexture, i.grab_screen_pos.xy / i.grab_screen_pos.w, 0); // No mipmap as we take matching pixels
                 fixed3 clamped_color = saturate(scene_color.rgb); // Avoid screen explosion at positive gamma + emission (>1) + bloom.
-                fixed3 emission = scene_color - clamped_color;  
+                fixed3 emission = _Transmit_Emission ? scene_color - clamped_color : 0;  
                 return fixed4(pow(clamped_color, i.gamma) + emission, 1);
             }
 
