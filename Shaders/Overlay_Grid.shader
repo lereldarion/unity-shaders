@@ -5,8 +5,8 @@
 //
 // Initial idea from https://github.com/netri/Neitri-Unity-Shaders
 // Improved with SPS-I support, Fullscreen "screenspace" mode.
-// Rewritten way of recreating VS positions using interpolated VS ray : precise, removes inverse, avoids unavailable unity_MatrixInvP.
 // Replaced emission by alpha replacement, and used nicer grid from bgolus (https://bgolus.medium.com/the-best-darn-grid-shader-yet-727f9278b9d8).
+// Using d4rkpl4y3r technique of patching unity_CameraInvProjection (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
 
 Shader "Lereldarion/Overlay/Grid" {
     Properties {
@@ -32,6 +32,9 @@ Shader "Lereldarion/Overlay/Grid" {
 
         Pass {
             CGPROGRAM
+            #pragma warning (error : 3205) // implicit precision loss
+            #pragma warning (error : 3206) // implicit truncation
+
             #pragma target 5.0
             #pragma vertex vertex_stage
             #pragma geometry geometry_stage
@@ -46,14 +49,12 @@ Shader "Lereldarion/Overlay/Grid" {
             };
             struct FragmentInput {
                 float4 position : SV_POSITION; // CS as rasterizer input, screenspace as fragment input
-                float3 position_vs : POSITION_VS;
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
             void vertex_stage (VertexInput input, out FragmentInput output) {
                 UNITY_SETUP_INSTANCE_ID(input);
-                output.position_vs = UnityObjectToViewPos(input.position_os);
-                output.position = UnityViewToClipPos(output.position_vs);
+                output.position = UnityObjectToClipPos(input.position_os);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
             }
             
@@ -79,8 +80,7 @@ Shader "Lereldarion/Overlay/Grid" {
 
                         UNITY_UNROLL
                         for(uint i = 0; i < 4; i += 1) {
-                            output.position_vs = float4(quad[i] * quad_xy, quad_z, 1);
-                            output.position = UnityViewToClipPos(output.position_vs);
+                            output.position = UnityViewToClipPos(float4(quad[i] * quad_xy, quad_z, 1));
                             stream.Append(output);
                         }
                     }
@@ -95,19 +95,35 @@ Shader "Lereldarion/Overlay/Grid" {
             UNITY_DECLARE_DEPTH_TEXTURE(_CameraDepthTexture);
             float4 _CameraDepthTexture_TexelSize;
 
-            struct SceneReconstruction {
-                float2 pixel;
-                float3 ray_vs;
-                float3 ray_dx_vs;
-                float3 ray_dy_vs;
+            // unity_MatrixInvP is not provided in BIRP. unity_CameraInvProjection is only the basic camera projection (no VR components).
+            // Using d4rkpl4y3r technique of patching unity_CameraInvProjection (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
+            struct DepthReconstruction {
+                float3 sv_position;
+                float4x4 cs_to_vs;
 
-                static SceneReconstruction init(FragmentInput input) {
-                    SceneReconstruction o;
-                    o.pixel = input.position.xy;
-                    o.ray_vs = input.position_vs / input.position.w;
-                    // Use derivatives to get ray for neighbouring pixels.
-                    o.ray_dx_vs = ddx_fine(o.ray_vs);
-                    o.ray_dy_vs = ddy_fine(o.ray_vs);
+                static DepthReconstruction init(float4 fragment_sv_position) {
+                    DepthReconstruction o;
+                    o.sv_position = fragment_sv_position.xyz; // xy is screen pixel pos
+
+                    float4x4 flipZ = float4x4(1, 0, 0, 0,
+                                            0, 1, 0, 0,
+                                            0, 0, -1, 1,
+                                            0, 0, 0, 1);
+                    float4x4 scaleZ = float4x4(1, 0, 0, 0,
+                                            0, 1, 0, 0,
+                                            0, 0, 2, -1,
+                                            0, 0, 0, 1);
+                    float4x4 invP = unity_CameraInvProjection;
+                    float4x4 flipY = float4x4(1, 0, 0, 0,
+                                            0, _ProjectionParams.x, 0, 0,
+                                            0, 0, 1, 0,
+                                            0, 0, 0, 1);
+                    o.cs_to_vs = mul(scaleZ, flipZ);
+                    o.cs_to_vs = mul(invP, o.cs_to_vs);
+                    o.cs_to_vs = mul(flipY, o.cs_to_vs);
+                    o.cs_to_vs._24 *= _ProjectionParams.x;
+                    o.cs_to_vs._42 *= -1;
+
                     return o;
                 }
 
@@ -116,12 +132,17 @@ Shader "Lereldarion/Overlay/Grid" {
                 }
                 
                 float3 position_vs(float2 pixel_shift) {
+                    float2 shifted_sv_position = sv_position.xy + pixel_shift;
                     // HLSLSupport.hlsl : DepthTexture is a TextureArray in SPS-I, so its size should be safe to use to get uvs.
-                    float3 shifted_ray_vs = ray_vs + pixel_shift.x * ray_dx_vs + pixel_shift.y * ray_dy_vs;
-                    float2 uv = (pixel + pixel_shift) * _CameraDepthTexture_TexelSize.xy;
-                    float raw = SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(uv, 0, 0)); // [0,1]
-                    if (!(0 < raw && raw < 1)) { discard; }
-                    return shifted_ray_vs * LinearEyeDepth(raw);
+                    float2 depth_texture_uv = shifted_sv_position * _CameraDepthTexture_TexelSize.xy;
+                    float raw = SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(depth_texture_uv, 0, 0)); // [0,1]
+
+                    float4 clipPos = float4(((shifted_sv_position / _ScreenParams.xy) * 2 - 1) * int2(1, -1), sv_position.z, 1);
+                    #ifdef UNITY_SINGLE_PASS_STEREO
+                        clipPos.x -= 2 * unity_StereoEyeIndex;
+                    #endif
+                    float4 v = mul(cs_to_vs, float4(clipPos.xy / clipPos.w, raw, 1));
+                    return v.xyz / v.w;
                 }
             };
             
@@ -137,23 +158,14 @@ Shader "Lereldarion/Overlay/Grid" {
                 return pattern;
             }
             
-            float3 old_grid_pattern(float3 uv) {
-                // Idea : add tint if position is close to axis xyz at grid_size intervals;
-                float3 grid_distance = abs(frac(0.5 + uv) - 0.5);
-                // non-linearize to spike if distance is 0
-                float3 grid_proximity = saturate(0.5 - grid_distance * grid_distance * 1000);
-                // Already fits Blender colors : x=red, y=green, z=blue
-                return grid_proximity;
-            }
-            
             uniform float _Grid_Size_Meters;
             uniform float _Grid_Line_Width_01;
 
             fixed4 fragment_stage (FragmentInput input) : SV_Target {
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
 
-                SceneReconstruction sr = SceneReconstruction::init(input);
-                float3 vs_0_0 = sr.position_vs();
+                DepthReconstruction dr = DepthReconstruction::init(input.position);
+                float3 vs_0_0 = dr.position_vs();
                 float3 ws = mul(unity_MatrixInvV, float4(vs_0_0, 1)).xyz;
 
                 float3 grid_pattern = bgolus_uv_01_grid(ws / _Grid_Size_Meters, _Grid_Line_Width_01);
