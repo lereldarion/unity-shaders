@@ -1,6 +1,7 @@
 # Lereldarion Unity Shaders
 Collection of useful Unity Shaders, made for VRChat.
 They are not dependent on its SDK but some features rely on [VRChat shader globals](https://creators.vrchat.com/worlds/udon/vrc-graphics/vrchat-shader-globals/).
+Unless specified, they have only be tested in a PC VR VRChat context : DX11, unity built-in render pipeline.
 
 Install :
 - using VCC at https://lereldarion.github.io/vpm-listing/.
