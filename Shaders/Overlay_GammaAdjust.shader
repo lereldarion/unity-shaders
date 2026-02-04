@@ -21,7 +21,7 @@ Shader "Lereldarion/Overlay/GammaAdjust" {
         }
         
         Cull Off
-        ZWrite Off
+        ZWrite On
         ZTest Less
 
         GrabPass { "_GammaAdjustGrabTexture" }
@@ -30,7 +30,6 @@ Shader "Lereldarion/Overlay/GammaAdjust" {
             CGPROGRAM
             #pragma target 5.0
             #pragma vertex vertex_stage
-            #pragma geometry geometry_stage
             #pragma fragment fragment_stage
             #pragma multi_compile_instancing
             
@@ -41,51 +40,38 @@ Shader "Lereldarion/Overlay/GammaAdjust" {
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
             struct FragmentInput {
-                float4 position_cs : SV_POSITION;
+                float4 position : SV_POSITION;
                 float4 grab_screen_pos : GRAB_SCREEN_POS;
                 nointerpolation float gamma : GAMMA;
                 UNITY_VERTEX_OUTPUT_STEREO
             };
             
-            uniform float _Gamma_Adjust_Value;
-            
-            void vertex_stage (VertexInput input, out FragmentInput output) {
-                UNITY_SETUP_INSTANCE_ID(input);
-                output.position_cs = UnityObjectToClipPos(input.position_os);
-                output.grab_screen_pos = ComputeGrabScreenPos(output.position_cs);
-                output.gamma = exp(_Gamma_Adjust_Value); // exp(3 * (0.3 - _Gamma_Adjust_Value));
-                UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
-            }
-            
             uniform float _Overlay_Fullscreen;
             uniform float _VRChatMirrorMode;
             uniform float _VRChatCameraMode;
-            static const float4 fullscreen_quad_position_cs[4] = {
-                float4(-1, -1, UNITY_NEAR_CLIP_VALUE, 1),
-                float4(-1,  1, UNITY_NEAR_CLIP_VALUE, 1),
-                float4( 1, -1, UNITY_NEAR_CLIP_VALUE, 1),
-                float4( 1,  1, UNITY_NEAR_CLIP_VALUE, 1),
-            };
+            uniform float _Gamma_Adjust_Value;
+
+            static const float nan = asfloat(uint(-1)); // 0xFFF...FFF should be a quiet NaN
             
-            [maxvertexcount(4)]
-            void geometry_stage(triangle FragmentInput input[3], uint triangle_id : SV_PrimitiveID, inout TriangleStream<FragmentInput> stream) {
+            void vertex_stage (VertexInput input, uint vertex_id : SV_VertexID, out FragmentInput output) {
+                UNITY_SETUP_INSTANCE_ID(input);
+                UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
+
                 if(_Overlay_Fullscreen == 1 && _VRChatMirrorMode == 0 && _VRChatCameraMode == 0) {
-                    // Fullscreen mode : generate a fullscreen quad for triangle 0 and discard others
-                    if (triangle_id == 0) {
-                        FragmentInput output = input[0];
-                        UNITY_UNROLL
-                        for(uint i = 0; i < 4; i += 1) {
-                            output.position_cs = fullscreen_quad_position_cs[i];
-                            output.grab_screen_pos = ComputeGrabScreenPos(output.position_cs);
-                            stream.Append(output);
-                        }
+                    // Fullscreen mode : cover the screen with an oversized triangle
+                    if(vertex_id < 4) {
+                        // For some reason we seem to need the 4th vertex on some meshes even if the float2(3, 3) point is way out. NaN effects ?
+                        float2 ndc = vertex_id & uint2(2, 1) ? 3 : -1; // [float2(-1, -1), float2(-1, 3), float2(3, -1)] to cover clip space [-1,1]^2
+                        output.position = float4(ndc, UNITY_NEAR_CLIP_VALUE, 1);
+                    } else {
+                        output.position = nan.xxxx; // Vertex discard
                     }
                 } else {
-                    // Normal geometry mode : forward triangle
-                    stream.Append(input[0]);
-                    stream.Append(input[1]);
-                    stream.Append(input[2]);
+                    output.position = UnityObjectToClipPos(input.position_os);
                 }
+                
+                output.grab_screen_pos = ComputeGrabScreenPos(output.position);
+                output.gamma = exp(_Gamma_Adjust_Value); // exp(3 * (0.3 - _Gamma_Adjust_Value));
             }
             
             uniform sampler2D _GammaAdjustGrabTexture;
