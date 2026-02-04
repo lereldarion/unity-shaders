@@ -131,11 +131,11 @@ Shader "Lereldarion/Overlay/Normals" {
                     float2 depth_texture_uv = shifted_sv_position * _CameraDepthTexture_TexelSize.xy;
                     float raw = SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(depth_texture_uv, 0, 0)); // [0,1]
 
-                    float4 clipPos = float4(((shifted_sv_position / _ScreenParams.xy) * 2 - 1) * int2(1, -1), sv_position.z, 1);
+                    float2 clipPos = ((shifted_sv_position / _ScreenParams.xy) * 2 - 1) * float2(1, -1);
                     #ifdef UNITY_SINGLE_PASS_STEREO
                         clipPos.x -= 2 * unity_StereoEyeIndex;
                     #endif
-                    float4 v = mul(cs_to_vs, float4(clipPos.xy / clipPos.w, raw, 1));
+                    float4 v = mul(cs_to_vs, float4(clipPos, raw, 1));
                     return v.xyz / v.w;
                 }
             };
