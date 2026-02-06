@@ -8,7 +8,8 @@ Shader "Lereldarion/Overlay/HUD" {
     Properties {
         [Header(HUD)]
         [HDR] _Color("Emissive color", Color) = (0, 1, 0, 1)
-        _Glyph_Texture_SDF ("Texture with SDF glyphs", 2D) = "white"
+        _Glyph_Texture_SDF ("Texture with SDF glyphs", 2D) = "white" {}
+        _UI_Thickness ("UI thickness", Range(0, 0.003)) = 0.001
 
         [Header(Overlay)]
         [ToggleUI] _Overlay_Fullscreen("Force Screenspace Fullscreen", Float) = 0
@@ -28,6 +29,9 @@ Shader "Lereldarion/Overlay/HUD" {
 
         Pass {
             CGPROGRAM
+            #pragma warning (error : 3205) // implicit precision loss
+            #pragma warning (error : 3206) // implicit truncation
+
             #pragma target 5.0
             #pragma vertex vertex_stage
             #pragma geometry geometry_stage
@@ -36,13 +40,57 @@ Shader "Lereldarion/Overlay/HUD" {
             
             #include "UnityCG.cginc"
 
-            ////////////////////////////////////////////////////////////////////////////////////
+            uniform fixed4 _Color;
+            uniform float _Overlay_Fullscreen;
+            uniform float _UI_Thickness;
 
-            // Macro required: https://issuetracker.unity3d.com/issues/gearvr-singlepassstereo-image-effects-are-not-rendering-properly
-            // Requires a source of dynamic light to be populated https://github.com/netri/Neitri-Unity-Shaders#types ; sad...
+            uniform Texture2D<float> _Glyph_Texture_SDF;
+            uniform SamplerState sampler_clamp_bilinear;
+
+            uniform float _VRChatMirrorMode;
+            uniform float _VRChatCameraMode;
+
             UNITY_DECLARE_DEPTH_TEXTURE(_CameraDepthTexture);
 
-            static const float pi = 3.14159265359;
+            // Utils
+            float2 pow2(float2 v) { return v * v; }
+            float glsl_mod(float x, float y) { return x - y * floor(x / y); }
+            static const float pi = UNITY_PI;
+
+            // SDF anti-alias blend
+            // https://blog.pkh.me/p/44-perfecting-anti-aliasing-on-signed-distance-functions.html
+            // https://github.com/Chlumsky/msdfgen has other info.
+            // Strategy : determine uv / sdf scale in screen space, and blend smoothly at 1px screen scale.
+            // sdf should be in uv units, so both scales are equivalent. Use uv as it is continuous, sdf is not due to ifs.
+            float compute_screenspace_scale_of_uv(float2 uv) {
+                const float2 screenspace_uv_scales = sqrt(pow2(ddx_fine(uv)) + pow2(ddy_fine(uv)));
+                return 0.5 * (screenspace_uv_scales.x + screenspace_uv_scales.y);
+            }
+            float sdf_blend_with_aa(float sdf, float screenspace_scale_of_uv) {
+                const float w = 0.5 * screenspace_scale_of_uv;
+                return smoothstep(-w, w, -sdf);
+            }
+
+            // MSDF textures utils https://github.com/Chlumsky/msdfgen
+            float median(float3 msd) { return max(min(msd.r, msd.g), min(max(msd.r, msd.g), msd.b)); }
+            float msdf_sample(Texture2D<float3> tex, float2 uv, float pixel_range, float2 texture_pixels) {
+                const float tex_sd = median(tex.SampleLevel(sampler_clamp_bilinear, uv, 0)) - 0.5;
+
+                // tex_sd is in [-0.5, 0.5]. It represents texture pixel ranges between [-pixel_range, pixel_range].
+                const float texture_pixel_sd = tex_sd * 2 * pixel_range;
+                const float texture_uv_sd = texture_pixel_sd / texture_pixels;
+                return -texture_uv_sd; // MSDF tooling generates inverted SDF (positive inside)
+            }
+
+            // Inigo Quilez https://iquilezles.org/articles/distfunctions2d/. Use negative for interior.
+            // "psdf" = Pseudo SDF, with sharp corners. Useful to keep sharp corners when thickness is added.
+            float extrude_border_with_thickness(float sdf, float thickness) {
+                return abs(sdf) - thickness;
+            }
+            float sdf_disk(float2 p, float radius) { return length(p) - radius; }
+            float sdf_circle(float2 p, float radius) { return abs(sdf_disk(p, radius)); }
+
+            ////////////////////////////////////////////////////////////////////////////////////
 
             // Data that can be precomputed at vertex stage.
             struct HudData {
@@ -150,10 +198,6 @@ Shader "Lereldarion/Overlay/HUD" {
 
             ////////////////////////////////////////////////////////////////////////////////////
 
-            uniform float _Overlay_Fullscreen;
-            uniform float _VRChatMirrorMode;
-            uniform float _VRChatCameraMode;
-
             [maxvertexcount(4)]
             void geometry_stage(triangle VertexInput input[3], uint triangle_id : SV_PrimitiveID, inout TriangleStream<FragmentInput> stream) {
                 UNITY_SETUP_INSTANCE_ID(input[0]);
@@ -214,8 +258,6 @@ Shader "Lereldarion/Overlay/HUD" {
             
             // SDF texture containing glyphs, and metadata for each glyph.
             // Texture is generated using TextMeshPro and extracted afterwards (using screenshot of preview, as "Extract Atlas" option did not work).
-            Texture2D<float> _Glyph_Texture_SDF;
-            SamplerState sampler_Glyph_Texture_SDF;
             // Metadata copied by hand for now.
             struct GlyphDefinition {
                 // https://learnopengl.com/In-Practice/Text-Rendering
@@ -280,7 +322,7 @@ Shader "Lereldarion/Overlay/HUD" {
                 float sdf(float thickness) {
                     const float2 glyph_texture_uv = glyph_texture_coord / glyph_texture_resolution;
                     // Force mipmap 0, as we have artefacts with auto mipmap (derivatives are propably noisy). Texture is small anyway.
-                    const float tex_sdf = _Glyph_Texture_SDF.SampleLevel(sampler_Glyph_Texture_SDF, glyph_texture_uv, 0);
+                    const float tex_sdf = _Glyph_Texture_SDF.SampleLevel(sampler_clamp_bilinear, glyph_texture_uv, 0);
                     // 1 interior, 0 exterior
                     return (1 - tex_sdf) - thickness;
                 }
@@ -341,21 +383,15 @@ Shader "Lereldarion/Overlay/HUD" {
             ////////////////////////////////////////////////////////////////////////////////////
             // Sight
 
-            float sight_pattern_sdf(float2 uv) {
-                // create the sight pattern based on 0-centered "uv"
-                // Distance is always positive, with no "interior" negative values. Skybox uv units.
-                // Relies on the final fade for thickness.
+            float sdf_crosshair_0thickness(float2 p) {
+                float circle = abs(sdf_disk(p, 0.04));
 
-                const float circle_radius = 0.04;
-                float circle_sdf = abs(length(uv) - circle_radius);
-
-                uv = abs(uv); // look in upper right quadrant, all symmetric anyway
-                uv = float2(max(uv.x, uv.y), min(uv.x, uv.y)); // lower triangle of the quadrant
-                float2 closest_segment_point = float2(clamp(uv.x, 0.01, 0.07), 0);
-                float cross_sdf = distance(uv, closest_segment_point);
-
-                const float thickness_bias = 0.0;
-                return min(circle_sdf, cross_sdf) - thickness_bias;
+                // 4 symmetric segments. Use symmetry to only look at east one.
+                p = abs(p);
+                p = p.x > p.y ? p : p.yx;
+                float2 closest_segment_point = float2(clamp(p.x, 0.01, 0.07), 0);
+                float cross = distance(p, closest_segment_point);
+                return min(circle, cross);
             }
 
             ////////////////////////////////////////////////////////////////////////////////////
@@ -377,10 +413,6 @@ Shader "Lereldarion/Overlay/HUD" {
 
             float interval_1d_sdf(float x, float from, float to) {
                 return interval_1d_centered_sdf(x, (from + to) / 2., (to - from) / 2.);
-            }
-
-            float glsl_mod(float x, float y) {
-                return x - y * floor(x / y);
             }
 
             float elevation_display_sdf(float2 uv, float elevation_at_0, inout GlyphRenderer renderer) {
@@ -456,8 +488,6 @@ Shader "Lereldarion/Overlay/HUD" {
             ////////////////////////////////////////////////////////////////////////////////////
             // Composition
 
-            uniform fixed4 _Color;
-
             fixed4 fragment_stage (FragmentInput input) : SV_Target {
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
 
@@ -467,22 +497,24 @@ Shader "Lereldarion/Overlay/HUD" {
                 const float2 rotating_uv = float2(dot(ray_ws, input.hud_data.rotating_uv_x_ws), dot(ray_ws, input.hud_data.rotating_uv_y_ws));
                 const float2 aligned_uv = float2(dot(ray_ws, input.hud_data.aligned_uv_x_ws), dot(ray_ws, input.hud_data.aligned_uv_y_ws));
 
-                float sdf = 1000 * sight_pattern_sdf(rotating_uv); // Need high scale due to uv units
+                const float screenspace_scale_of_uv = compute_screenspace_scale_of_uv(aligned_uv); // Both uv sets should have the same scale
+
+                float ui_sd = sdf_crosshair_0thickness(rotating_uv);
 
                 GlyphRenderer renderer = GlyphRenderer::create();
                 draw_range_counter(rotating_uv, input.hud_data.range_digits, renderer);
                 draw_world_position_block(rotating_uv, input.hud_data, renderer);
-                sdf = min(sdf, 1000 * elevation_display_sdf(aligned_uv, input.hud_data.elevation_radiants, renderer));
+                float sdf = 1000 * elevation_display_sdf(aligned_uv, input.hud_data.elevation_radiants, renderer);
                 sdf = min(sdf, 1000 * azimuth_display_sdf(aligned_uv, input.hud_data.azimuth_radiants, renderer));
                 sdf = min(sdf, 3 * renderer.sdf(0.15)); // Scale for sharpness
 
-                // We have few pixels, so make a smooth border FIXME improve consistency
+                float opacity = sdf_blend_with_aa(ui_sd - _UI_Thickness, screenspace_scale_of_uv);
+                
+                // TODO remove legacy blurring
                 const float positive_distance = max(0, sdf);
-                const float fade = 1. - positive_distance * positive_distance;
-                if (fade <= 0) {
-                    discard;
-                }
-                return _Color * fade;
+                opacity = max(opacity, 1. - positive_distance * positive_distance);
+                
+                return _Color * opacity;
             }
 
             ENDCG
