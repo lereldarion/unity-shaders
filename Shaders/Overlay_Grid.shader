@@ -63,8 +63,8 @@ Shader "Lereldarion/Overlay/Grid" {
                 if(_Overlay_Fullscreen == 1 && _VRChatMirrorMode == 0 && _VRChatCameraMode == 0) {
                     // Fullscreen mode : cover the screen with an oversized triangle
                     if(vertex_id < 4) {
-                        // For some reason we seem to need the 4th vertex on some meshes even if the float2(3, 3) point is way out. NaN effects ?
-                        float2 ndc = vertex_id & uint2(2, 1) ? 3 : -1; // [float2(-1, -1), float2(-1, 3), float2(3, -1)] to cover clip space [-1,1]^2
+                        // For some reason we seem to need the 4th vertex on some meshes even if the second triangle is entirely outside clip space. NaN effects ?
+                        float2 ndc = vertex_id & uint2(2, 1) ? 3.1 : -1; // [float2(-1, -1), float2(-1, 3.1), float2(3.1, -1)] to cover clip space [-1,1]^2
                         output.position = float4(ndc, UNITY_NEAR_CLIP_VALUE, 1);
                     } else {
                         output.position = nan.xxxx; // Vertex discard
