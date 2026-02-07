@@ -48,6 +48,8 @@ Shader "Lereldarion/Overlay/HUD" {
             uniform float4 _Test_Glyph;
             static const float _Crosshair_Circle_Radius = 0.03;
             static const float _Crosshair_Tick_Length = 0.04;
+            static const float _Font_Size = 0.022;
+            static const float2 _Measurement_Digit_block_Position = float2(-0.3, -0.2);
 
             uniform SamplerState sampler_clamp_bilinear;
             uniform Texture2D<float> _Glyph_Texture_SDF; // LEGACY
@@ -88,7 +90,7 @@ Shader "Lereldarion/Overlay/HUD" {
             ////////////////////////////////////////////////////////////////////////////////////
             // MSDF monospace glyph rendering.
             // https://github.com/Chlumsky/msdfgen
-            struct GlyphRenderer {
+            struct Font {
                 // Atlas info from MSDF metrics. Depend on the texture used !
                 static const float2 atlas_size_px = float2(256, 64);
                 static const float2 cell_size_px = float2(23, 29);
@@ -102,21 +104,27 @@ Shader "Lereldarion/Overlay/HUD" {
                 static const float ascender_px = 1.005 * em_to_px.y; // used for font size
                 static const float line_height_px = 1.3 * em_to_px.y;
                 static const float glyph_left_px = glyph_bottom_left_em.x * em_to_px.x;
+                static const float2 glyph_bbox_px = float2(advance_px, cell_usable_size_px.y);
 
-                static const uint glyph_plus = 0;
-                static const uint glyph_minus = 1;
-                static const uint glyph_dot = 2;
-                static const uint glyph_0 = 3; // 0-9 as a sequence
-                static const uint glyph_colon = 13; // :
-                static const uint glyph_X = 14;
-                static const uint glyph_Y = 15;
-                static const uint glyph_Z = 16;
-                static const uint glyph_f = 17;
-                static const uint glyph_emptyset = 18;
-                static const uint glyph_range_to = 19;
-                static const uint glyph_infinity = 20;
-                static const uint glyph_camera_prism = 21;
-                static const uint glyph_space = 22; // Not a glyph, outside bounds, so will sample void
+                // Atlas glyph ids
+                static const uint plus = 0;
+                static const uint minus = 1;
+                static const uint dot = 2;
+                static const uint zero = 3; // 0-9 as a sequence
+                static const uint colon = 13; // :
+                static const uint X = 14;
+                static const uint Y = 15;
+                static const uint Z = 16;
+                static const uint f = 17;
+                static const uint emptyset = 18;
+                static const uint arrow_to = 19;
+                static const uint infinity = 20;
+                static const uint camera_prism = 21;
+                // Atlas ids utils 
+                static const uint bits = 5;
+                static const uint mask = (1u << bits) - 1u;
+                static const uint space = mask; // will sample to none
+                static const uint packed_spaces = uint(-1);
 
                 static float median(float3 msd) { return max(min(msd.r, msd.g), min(max(msd.r, msd.g), msd.b)); }
 
@@ -127,11 +135,11 @@ Shader "Lereldarion/Overlay/HUD" {
                 float sampling_inverse_scale;
                 uint sampling_atlas_id;
 
-                static GlyphRenderer init() {
-                    GlyphRenderer r;
+                static Font init() {
+                    Font r;
                     r.sampling_offset_px = float2(0, 0);
                     r.sampling_inverse_scale = 1;
-                    r.sampling_atlas_id = glyph_space;
+                    r.sampling_atlas_id = space;
                     return r;
                 }
                 float sdf() {
@@ -147,10 +155,28 @@ Shader "Lereldarion/Overlay/HUD" {
                 void draw_glyph(float2 p, uint glyph, float2 position, float size) {
                     const float scale = ascender_px / size;
                     const float2 px = (p - position) * scale;
-                    if(all(0 <= px && px <= float2(advance_px, cell_usable_size_px.y))) {
+                    if(all(0 <= px && px <= glyph_bbox_px)) {
                         sampling_offset_px = px;
                         sampling_inverse_scale = 1 / scale;
                         sampling_atlas_id = glyph;
+                    }
+                }
+                void draw_glyphs_5x12(float2 p, uint4 glyphs_0_4[2], uint2 glyphs_4, float2 position, float size) {
+                    // glyphs_0_4 : [0]=00fedcba, [1]=00lkjihg, XYZW = line
+                    // glyphs_4 : [0]=00fedcba, [1]=00lkjihg
+                    const float scale = ascender_px / size;
+                    const float2 px = (p - position) * scale;
+                    if(all(0 <= px && px <= glyph_bbox_px * float2(12, 5))) {
+                        float2 column_row = floor(px / glyph_bbox_px);
+                        sampling_offset_px = px - column_row * glyph_bbox_px;
+                        sampling_inverse_scale = 1 / scale;
+
+                        uint n = column_row.x;
+                        uint row = 4 - column_row.y;
+                        uint block_of_6 = n >= 6 ? 1 : 0;
+                        uint glyphs = row < 4 ? glyphs_0_4[block_of_6][row] : glyphs_4[block_of_6];
+                        n = n >= 6 ? n - 6 : n;
+                        sampling_atlas_id = (glyphs >> (n * Font::bits)) & Font::mask;
                     }
                 }
             };
@@ -159,22 +185,13 @@ Shader "Lereldarion/Overlay/HUD" {
 
             // Data that can be precomputed at vertex stage.
             struct HudData {
-                // Unit vectors rotating with the overlay surface
-                nointerpolation float3 rotating_uv_x_ws : ROTATING_UV_X;
-                nointerpolation float3 rotating_uv_y_ws : ROTATING_UV_Y;
-
                 // Unit vectors that stay aligned to the vertical direction
                 nointerpolation float3 aligned_uv_x_ws : ALIGNED_UV_X;
                 nointerpolation float3 aligned_uv_y_ws : ALIGNED_UV_Y;
 
-                // "X -123456.89" : 12 glyphs, 5 bits each. 6 per u32. XYZ = world xyz, W = range
-                //nointerpolation uint4 glyphs_12_6 : GLYPHS_12_6;
-                //nointerpolation uint4 glyphs_6_0 : GLYPHS_6_0;
-
-                nointerpolation uint4 range_digits : RANGE_DIGITS;
-                nointerpolation uint4 world_x_digits : WORLD_X_DIGITS;
-                nointerpolation uint4 world_y_digits : WORLD_Y_DIGITS;
-                nointerpolation uint4 world_z_digits : WORLD_Z_DIGITS;
+                // "X -123456.89" : 12 glyphs, 5 bits each. 6 per u32. 
+                nointerpolation uint4 glyphs_xyzc[2] : GLYPHS_XYZC; // [0]=00fedcba, [1]=00lkjihg, XYZ = world xyz, W = camera far plane
+                nointerpolation uint2 glyphs_range : GLYPHS_RANGE; // X=00fedcba, Y=00lkjihg
 
                 nointerpolation float azimuth_radiants : AZIMUTH;
                 nointerpolation float elevation_radiants : ELEVATION;
@@ -185,10 +202,6 @@ Shader "Lereldarion/Overlay/HUD" {
                     float forward_flip = normal_is_forward ? 1 : -1;
                     float3 forward_normal_ws = normal_ws * forward_flip;
                     float3 forward_tangent_ws = tangent_ws * forward_flip;
-
-                    // Use tangent space to follow quad rotations.
-                    hd.rotating_uv_x_ws = forward_tangent_ws;
-                    hd.rotating_uv_y_ws = normalize(cross(forward_normal_ws, forward_tangent_ws)); // No tangent.w, as we want a right handed TBN.
 
                     // Similar skybox coordinate system but y stays aligned to worldspace vertical.
                     const float3 up_direction_ws = float3(0, 1, 0);
@@ -224,21 +237,50 @@ Shader "Lereldarion/Overlay/HUD" {
                     const float depth_texture_value = SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(screen_pos.xy / screen_pos.w, 0, 4 /* mipmap level = average a little bit */));
                     const float range_ws = LinearEyeDepth(depth_texture_value) / sample_point_cs.w;
 
-                    // Pre compute digits to print for range and world position
-                    const float4 printed_values = float4(
-                        range_ws,
-                        abs(camera_pos_ws) // sign handled in fragment
-                    );
-                    uint4 int_values = clamp((uint4) printed_values, 0, 9999);
-                    const uint4 digit_1 = int_values % 10; int_values = int_values / 10;
-                    const uint4 digit_10 = int_values % 10; int_values = int_values / 10;
-                    const uint4 digit_100 = int_values % 10; int_values = int_values / 10;
-                    const uint4 digit_1000 = int_values;
-                    hd.range_digits   = uint4(digit_1000[0], digit_100[0], digit_10[0], digit_1[0]);
-                    hd.world_x_digits = uint4(digit_1000[1], digit_100[1], digit_10[1], digit_1[1]);
-                    hd.world_y_digits = uint4(digit_1000[2], digit_100[2], digit_10[2], digit_1[2]);
-                    hd.world_z_digits = uint4(digit_1000[3], digit_100[3], digit_10[3], digit_1[3]);
-
+                    // Pre compute position glyphs. Simplifies the fragment code.
+                    const uint bits = Font::bits; // 5 bits, 6 glyphs bit packed per uint
+                    {
+                        // World pos (camera) and far plane
+                        const float4 values = float4(camera_pos_ws, _ProjectionParams.z);
+                        uint4 pad = values < 0 ? Font::minus : Font::space; // Start with a '-' if needed. After being used once, reset to space.
+                        uint4 v = uint4(abs(values) * 100);
+                        hd.glyphs_xyzc[1]  =                Font::zero + v % 10;                                   hd.glyphs_xyzc[1] <<= bits; v /= 10;
+                        hd.glyphs_xyzc[1] |=                Font::zero + v % 10;                                   hd.glyphs_xyzc[1] <<= bits; v /= 10;
+                        hd.glyphs_xyzc[1] |=                          Font::dot;                                   hd.glyphs_xyzc[1] <<= bits;
+                        hd.glyphs_xyzc[1] |=                Font::zero + v % 10;                                   hd.glyphs_xyzc[1] <<= bits; v /= 10;
+                        hd.glyphs_xyzc[1] |= v == 0 ? pad : Font::zero + v % 10; pad = v == 0 ? Font::space : pad; hd.glyphs_xyzc[1] <<= bits; v /= 10;
+                        hd.glyphs_xyzc[1] |= v == 0 ? pad : Font::zero + v % 10; pad = v == 0 ? Font::space : pad;                             v /= 10;
+                        hd.glyphs_xyzc[0]  = v == 0 ? pad : Font::zero + v % 10; pad = v == 0 ? Font::space : pad; hd.glyphs_xyzc[0] <<= bits; v /= 10;
+                        hd.glyphs_xyzc[0] |= v == 0 ? pad : Font::zero + v % 10; pad = v == 0 ? Font::space : pad; hd.glyphs_xyzc[0] <<= bits; v /= 10;
+                        hd.glyphs_xyzc[0] |= v == 0 ? pad : Font::zero + v % 10; pad = v == 0 ? Font::space : pad; hd.glyphs_xyzc[0] <<= bits; v /= 10;
+                        hd.glyphs_xyzc[0] |= v == 0 ? pad : Font::zero + v % 10; pad = v == 0 ? Font::space : pad; hd.glyphs_xyzc[0] <<= bits; v /= 10;
+                        hd.glyphs_xyzc[0] |=                                pad;                                   hd.glyphs_xyzc[0] <<= bits;
+                        // If v > 0 at this stage, too large to be represented, use infinity symbol. Unlikely to happen in VRC.
+                        hd.glyphs_xyzc[1] = v == 0 ? hd.glyphs_xyzc[1] : (Font::packed_spaces >> (32 - 4 * bits)) | ((values < 0 ? Font::minus : Font::space) << (4 * bits)) | (Font::infinity << (5 * bits));
+                        hd.glyphs_xyzc[0] = v == 0 ? hd.glyphs_xyzc[0] : Font::packed_spaces << bits;
+                        // Finalize with field symbol
+                        hd.glyphs_xyzc[0] |= uint4(Font::X, Font::Y, Font::Z, Font::camera_prism);
+                    }
+                    {
+                        // Range. Very similar but never negative and 0 = undefined
+                        hd.glyphs_range[1] = (Font::packed_spaces >> (32 - 5 * bits)) | (Font::emptyset << (5 * bits));
+                        hd.glyphs_range[0] = (Font::packed_spaces << bits) | Font::arrow_to;
+                        uint v = uint(max(range_ws, 0) * 100);
+                        if(v > 0) {
+                            hd.glyphs_range[1]  =                        Font::zero + v % 10; hd.glyphs_range[1] <<= bits; v /= 10;
+                            hd.glyphs_range[1] |=                        Font::zero + v % 10; hd.glyphs_range[1] <<= bits; v /= 10;
+                            hd.glyphs_range[1] |=                                  Font::dot; hd.glyphs_range[1] <<= bits;
+                            hd.glyphs_range[1] |=                        Font::zero + v % 10; hd.glyphs_range[1] <<= bits; v /= 10;
+                            hd.glyphs_range[1] |= v == 0 ? Font::space : Font::zero + v % 10; hd.glyphs_range[1] <<= bits; v /= 10;
+                            hd.glyphs_range[1] |= v == 0 ? Font::space : Font::zero + v % 10;                              v /= 10;
+                            hd.glyphs_range[0]  = v == 0 ? Font::space : Font::zero + v % 10; hd.glyphs_range[0] <<= bits; v /= 10;
+                            hd.glyphs_range[0] |= v == 0 ? Font::space : Font::zero + v % 10; hd.glyphs_range[0] <<= bits; v /= 10;
+                            hd.glyphs_range[0] |= v == 0 ? Font::space : Font::zero + v % 10; hd.glyphs_range[0] <<= bits; v /= 10;
+                            hd.glyphs_range[0] |= v == 0 ? Font::space : Font::zero + v % 10; hd.glyphs_range[0] <<= bits; v /= 10;
+                            hd.glyphs_range[0] |=                                Font::space; hd.glyphs_range[0] <<= bits;
+                            hd.glyphs_range[0] |=                             Font::arrow_to;
+                        }
+                    }
                     return hd;
                 }
             };
@@ -404,51 +446,6 @@ Shader "Lereldarion/Overlay/HUD" {
             };
 
             ////////////////////////////////////////////////////////////////////////////////////
-            // Range
-
-            void draw_range_counter(float2 uv, uint4 digits, inout GlyphRendererOld renderer) {
-                const float scale = 0.0004;
-                float2 origin = float2(0, -0.07);
-                origin = renderer.add_right(digits[0], uv, origin, scale);
-                origin = renderer.add_right(digits[1], uv, origin, scale);
-                origin = renderer.add_right(digits[2], uv, origin, scale);
-                origin = renderer.add_right(digits[3], uv, origin, scale);
-            }
-
-            ////////////////////////////////////////////////////////////////////////////////////
-            // World position block
-
-            void draw_world_position(float2 uv, float2 origin, float scale, bool negative, uint4 digits, inout GlyphRendererOld renderer) {
-                origin = renderer.add_left(digits[3], uv, origin, scale);
-                origin = renderer.add_left(digits[2], uv, origin, scale);
-                origin = renderer.add_left(digits[1], uv, origin, scale);
-                origin = renderer.add_left(digits[0], uv, origin, scale);
-                UNITY_FLATTEN if(negative) {
-                    renderer.add_left(11 /* '-' */, uv, origin, scale);
-                }
-            }
-
-            void draw_world_position_block(float2 uv, HudData hud_data, inout GlyphRendererOld renderer) {
-                #if UNITY_SINGLE_PASS_STEREO // Consistent position. Digits are computed in vertex, but sign is cheap to do there.
-                const float3 camera_pos_ws = unity_StereoWorldSpaceCameraPos[0];
-                #else
-                const float3 camera_pos_ws = _WorldSpaceCameraPos;
-                #endif
-                const float scale = 0.0003;
-                const float2 origin = float2(-0.1, -0.05);
-
-                // Draw left and down from origin. Compute a bounding box to condition this rendering with a real branch.
-                const float2 v_offset = -float2(0, glyph_max_box_size.y) * scale;
-                const float2 h_offset = -float2(glyph_max_box_size.x, 0) * scale;
-                const float2 bounding_box_bottom_left = origin + 4 * v_offset + 5 * h_offset;
-                if (all(bounding_box_bottom_left < uv && uv < origin)) {
-                    draw_world_position(uv, origin + 1 * v_offset, scale, camera_pos_ws.x < 0, hud_data.world_x_digits, renderer);
-                    draw_world_position(uv, origin + 2 * v_offset, scale, camera_pos_ws.y < 0, hud_data.world_y_digits, renderer);
-                    draw_world_position(uv, origin + 3 * v_offset, scale, camera_pos_ws.z < 0, hud_data.world_z_digits, renderer);
-                }
-            }
-
-            ////////////////////////////////////////////////////////////////////////////////////
             // Sight
 
             float sdf_crosshair_0thickness(float2 p) {
@@ -562,23 +559,20 @@ Shader "Lereldarion/Overlay/HUD" {
                 // i.{aligned/rotating}_uv_{x/y}_os are vectors in a plane facing the view.
                 // We want a measure of angle to view dir ~ sin angle to view dir = cos angle to these plane vectors.
                 const float3 ray_ws = normalize(input.camera_to_geometry_ws);
-                const float2 rotating_uv = float2(dot(ray_ws, input.hud_data.rotating_uv_x_ws), dot(ray_ws, input.hud_data.rotating_uv_y_ws));
                 const float2 aligned_uv = float2(dot(ray_ws, input.hud_data.aligned_uv_x_ws), dot(ray_ws, input.hud_data.aligned_uv_y_ws));
 
                 const float screenspace_scale_of_uv = compute_screenspace_scale_of_uv(aligned_uv); // Both uv sets should have the same scale
 
-                GlyphRenderer renderer = GlyphRenderer::init();
-                float ui_sd = sdf_crosshair_0thickness(rotating_uv);
-                renderer.draw_glyph(aligned_uv, _Test_Glyph.w, _Test_Glyph.xy, _Test_Glyph.z);
+                Font font = Font::init();
+                float ui_sd = sdf_crosshair_0thickness(aligned_uv);
+                font.draw_glyphs_5x12(aligned_uv, input.hud_data.glyphs_xyzc, input.hud_data.glyphs_range, _Measurement_Digit_block_Position, _Font_Size);
 
                 GlyphRendererOld renderer_old = GlyphRendererOld::create();
-                draw_range_counter(rotating_uv, input.hud_data.range_digits, renderer_old);
-                draw_world_position_block(rotating_uv, input.hud_data, renderer_old);
                 float sdf = 1000 * elevation_display_sdf(aligned_uv, input.hud_data.elevation_radiants, renderer_old);
                 sdf = min(sdf, 1000 * azimuth_display_sdf(aligned_uv, input.hud_data.azimuth_radiants, renderer_old));
                 sdf = min(sdf, 3 * renderer_old.sdf(0.15)); // Scale for sharpness
 
-                const float sd = min(ui_sd - _UI_Thickness, renderer.sdf());
+                const float sd = min(ui_sd - _UI_Thickness, font.sdf());
                 float opacity = sdf_blend_with_aa(sd, screenspace_scale_of_uv);
                 
                 // TODO remove legacy blurring
