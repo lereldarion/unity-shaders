@@ -345,6 +345,7 @@ Shader "Lereldarion/Overlay/HUD" {
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
                 float3 normal_ws = 0;
+                bool compute_hud_data = true;
 
                 if(_Overlay_Fullscreen == 1 && _VRChatMirrorMode == 0 && _VRChatCameraMode == 0) {
                     // Fullscreen mode : cover the screen with an oversized triangle
@@ -359,6 +360,7 @@ Shader "Lereldarion/Overlay/HUD" {
                     } else {
                         output.position = nan.xxxx; // Vertex discard
                         output.ray_ws = 0;
+                        compute_hud_data = false;
                     }
                 } else {
                     const float3 position_ws = mul(unity_ObjectToWorld, float4(input.position_os.xyz, 1)).xyz;
@@ -367,10 +369,10 @@ Shader "Lereldarion/Overlay/HUD" {
                     normal_ws = UnityObjectToWorldNormal(input.normal_os);
                 }
 
-                if(isnan(output.position.x)) {
-                    output.hud_data = (HudData) 0;
-                } else {
+                if(compute_hud_data) {
                     output.hud_data = HudData::compute(normal_ws, dot(normal_ws, output.ray_ws) >= 0);
+                } else {
+                    output.hud_data = (HudData) 0;
                 }
             }
 

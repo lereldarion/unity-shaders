@@ -23,14 +23,14 @@ Material:
   m_SavedProperties:
     serializedVersion: 3
     m_TexEnvs:
-    - _Glyph_Texture_SDF:
-        m_Texture: {fileID: 2800000, guid: 9e6fed0d94f03364cbaeb8c28dad528d, type: 3}
+    - _MSDF_Glyph_Atlas:
+        m_Texture: {fileID: 2800000, guid: 276380394144e7141a4c928a1ec0c02e, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     m_Ints: []
     m_Floats:
     - _Overlay_Fullscreen: 0
-    - _UI_Thickness: 0.001
+    - _Zoom: 1
     m_Colors:
     - _Color: {r: 0, g: 1, b: 0, a: 1}
   m_BuildTextureStacks: []
