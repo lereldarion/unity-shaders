@@ -48,7 +48,7 @@ Shader "Lereldarion/Overlay/HUD" {
             uniform float4 _Test_Glyph;
             static const float _Crosshair_Circle_Radius = 0.03;
             static const float _Crosshair_Tick_Length = 0.04;
-            static const float _Font_Size = 0.022;
+            static const float _Font_Size = 0.023;
             static const float2 _Measurement_Digit_block_Position = float2(-0.3, -0.2);
 
             uniform SamplerState sampler_clamp_bilinear;
@@ -161,22 +161,21 @@ Shader "Lereldarion/Overlay/HUD" {
                         sampling_atlas_id = glyph;
                     }
                 }
-                void draw_glyphs_5x12(float2 p, uint4 glyphs_0_4[2], uint2 glyphs_4, float2 position, float size) {
-                    // glyphs_0_4 : [0]=00fedcba, [1]=00lkjihg, XYZW = line
-                    // glyphs_4 : [0]=00fedcba, [1]=00lkjihg
+                void draw_glyphs_6x12(float2 p, uint4 glyphs[3], float2 position, float size) {
+                    // glyphs : X/Z=00fedcba, Y/W=00lkjihg
                     const float scale = ascender_px / size;
                     const float2 px = (p - position) * scale;
-                    if(all(0 <= px && px <= glyph_bbox_px * float2(12, 5))) {
+                    if(all(0 <= px && px <= glyph_bbox_px * float2(12, 6))) {
                         float2 column_row = floor(px / glyph_bbox_px);
                         sampling_offset_px = px - column_row * glyph_bbox_px;
                         sampling_inverse_scale = 1 / scale;
 
                         uint n = column_row.x;
-                        uint row = 4 - column_row.y;
-                        uint block_of_6 = n >= 6 ? 1 : 0;
-                        uint glyphs = row < 4 ? glyphs_0_4[block_of_6][row] : glyphs_4[block_of_6];
+                        uint row = 5 - column_row.y;
+                        uint2 glyphs_12 = row < 3 ? glyphs[row].xy : glyphs[row - 3].zw;
+                        uint glyphs_6 = n < 6 ? glyphs_12.x : glyphs_12.y;
                         n = n >= 6 ? n - 6 : n;
-                        sampling_atlas_id = (glyphs >> (n * Font::bits)) & Font::mask;
+                        sampling_atlas_id = (glyphs_6 >> (n * Font::bits)) & Font::mask;
                     }
                 }
             };
@@ -190,8 +189,7 @@ Shader "Lereldarion/Overlay/HUD" {
                 nointerpolation float3 aligned_uv_y_ws : ALIGNED_UV_Y;
 
                 // "X -123456.89" : 12 glyphs, 5 bits each. 6 per u32. 
-                nointerpolation uint4 glyphs_xyzc[2] : GLYPHS_XYZC; // [0]=00fedcba, [1]=00lkjihg, XYZ = world xyz, W = camera far plane
-                nointerpolation uint2 glyphs_range : GLYPHS_RANGE; // X=00fedcba, Y=00lkjihg
+                nointerpolation uint4 glyphs[3] : GLYPHS; // X/Z=00fedcba, Y/W=00lkjihg, [i].XY = world pos, [i].ZW = {far plane, range, fps}
 
                 nointerpolation float azimuth_radiants : AZIMUTH;
                 nointerpolation float elevation_radiants : ELEVATION;
@@ -240,46 +238,58 @@ Shader "Lereldarion/Overlay/HUD" {
                     // Pre compute position glyphs. Simplifies the fragment code.
                     const uint bits = Font::bits; // 5 bits, 6 glyphs bit packed per uint
                     {
-                        // World pos (camera) and far plane
-                        const float4 values = float4(camera_pos_ws, _ProjectionParams.z);
-                        uint4 pad = values < 0 ? Font::minus : Font::space; // Start with a '-' if needed. After being used once, reset to space.
-                        uint4 v = uint4(abs(values) * 100);
-                        hd.glyphs_xyzc[1]  =                Font::zero + v % 10;                                   hd.glyphs_xyzc[1] <<= bits; v /= 10;
-                        hd.glyphs_xyzc[1] |=                Font::zero + v % 10;                                   hd.glyphs_xyzc[1] <<= bits; v /= 10;
-                        hd.glyphs_xyzc[1] |=                          Font::dot;                                   hd.glyphs_xyzc[1] <<= bits;
-                        hd.glyphs_xyzc[1] |=                Font::zero + v % 10;                                   hd.glyphs_xyzc[1] <<= bits; v /= 10;
-                        hd.glyphs_xyzc[1] |= v == 0 ? pad : Font::zero + v % 10; pad = v == 0 ? Font::space : pad; hd.glyphs_xyzc[1] <<= bits; v /= 10;
-                        hd.glyphs_xyzc[1] |= v == 0 ? pad : Font::zero + v % 10; pad = v == 0 ? Font::space : pad;                             v /= 10;
-                        hd.glyphs_xyzc[0]  = v == 0 ? pad : Font::zero + v % 10; pad = v == 0 ? Font::space : pad; hd.glyphs_xyzc[0] <<= bits; v /= 10;
-                        hd.glyphs_xyzc[0] |= v == 0 ? pad : Font::zero + v % 10; pad = v == 0 ? Font::space : pad; hd.glyphs_xyzc[0] <<= bits; v /= 10;
-                        hd.glyphs_xyzc[0] |= v == 0 ? pad : Font::zero + v % 10; pad = v == 0 ? Font::space : pad; hd.glyphs_xyzc[0] <<= bits; v /= 10;
-                        hd.glyphs_xyzc[0] |= v == 0 ? pad : Font::zero + v % 10; pad = v == 0 ? Font::space : pad; hd.glyphs_xyzc[0] <<= bits; v /= 10;
-                        hd.glyphs_xyzc[0] |=                                pad;                                   hd.glyphs_xyzc[0] <<= bits;
+                        // World pos (camera). May be negative
+                        uint3 pad = camera_pos_ws < 0 ? Font::minus : Font::space; // Start with a '-' if needed. After being used once, reset to space.
+                        uint3 v = uint3(abs(camera_pos_ws) * 100);
+                        uint3 glyphs[2];
+                        glyphs[1]  =                Font::zero + v % 10;                                   glyphs[1] <<= bits; v /= 10;
+                        glyphs[1] |=                Font::zero + v % 10;                                   glyphs[1] <<= bits; v /= 10;
+                        glyphs[1] |=                          Font::dot;                                   glyphs[1] <<= bits;
+                        glyphs[1] |=                Font::zero + v % 10;                                   glyphs[1] <<= bits; v /= 10;
+                        glyphs[1] |= v == 0 ? pad : Font::zero + v % 10; pad = v == 0 ? Font::space : pad; glyphs[1] <<= bits; v /= 10;
+                        glyphs[1] |= v == 0 ? pad : Font::zero + v % 10; pad = v == 0 ? Font::space : pad;                     v /= 10;
+                        glyphs[0]  = v == 0 ? pad : Font::zero + v % 10; pad = v == 0 ? Font::space : pad; glyphs[0] <<= bits; v /= 10;
+                        glyphs[0] |= v == 0 ? pad : Font::zero + v % 10; pad = v == 0 ? Font::space : pad; glyphs[0] <<= bits; v /= 10;
+                        glyphs[0] |= v == 0 ? pad : Font::zero + v % 10; pad = v == 0 ? Font::space : pad; glyphs[0] <<= bits; v /= 10;
+                        glyphs[0] |= v == 0 ? pad : Font::zero + v % 10; pad = v == 0 ? Font::space : pad; glyphs[0] <<= bits; v /= 10;
+                        glyphs[0] |=                                pad;                                   glyphs[0] <<= bits;
                         // If v > 0 at this stage, too large to be represented, use infinity symbol. Unlikely to happen in VRC.
-                        hd.glyphs_xyzc[1] = v == 0 ? hd.glyphs_xyzc[1] : (Font::packed_spaces >> (32 - 4 * bits)) | ((values < 0 ? Font::minus : Font::space) << (4 * bits)) | (Font::infinity << (5 * bits));
-                        hd.glyphs_xyzc[0] = v == 0 ? hd.glyphs_xyzc[0] : Font::packed_spaces << bits;
-                        // Finalize with field symbol
-                        hd.glyphs_xyzc[0] |= uint4(Font::X, Font::Y, Font::Z, Font::camera_prism);
+                        glyphs[1] = v == 0 ? glyphs[1] : (Font::packed_spaces >> (32 - 4 * bits)) | ((camera_pos_ws < 0 ? Font::minus : Font::space) << (4 * bits)) | (Font::infinity << (5 * bits));
+                        glyphs[0] = v == 0 ? glyphs[0] : Font::packed_spaces << bits;
+                        // Finalize with field symbol and repack
+                        glyphs[0] |= uint3(Font::X, Font::Y, Font::Z);
+                        hd.glyphs[0].xy = uint2(glyphs[0].x, glyphs[1].x);
+                        hd.glyphs[1].xy = uint2(glyphs[0].y, glyphs[1].y);
+                        hd.glyphs[2].xy = uint2(glyphs[0].z, glyphs[1].z);
                     }
                     {
-                        // Range. Very similar but never negative and 0 = undefined
-                        hd.glyphs_range[1] = (Font::packed_spaces >> (32 - 5 * bits)) | (Font::emptyset << (5 * bits));
-                        hd.glyphs_range[0] = (Font::packed_spaces << bits) | Font::arrow_to;
-                        uint v = uint(max(range_ws, 0) * 100);
-                        if(v > 0) {
-                            hd.glyphs_range[1]  =                        Font::zero + v % 10; hd.glyphs_range[1] <<= bits; v /= 10;
-                            hd.glyphs_range[1] |=                        Font::zero + v % 10; hd.glyphs_range[1] <<= bits; v /= 10;
-                            hd.glyphs_range[1] |=                                  Font::dot; hd.glyphs_range[1] <<= bits;
-                            hd.glyphs_range[1] |=                        Font::zero + v % 10; hd.glyphs_range[1] <<= bits; v /= 10;
-                            hd.glyphs_range[1] |= v == 0 ? Font::space : Font::zero + v % 10; hd.glyphs_range[1] <<= bits; v /= 10;
-                            hd.glyphs_range[1] |= v == 0 ? Font::space : Font::zero + v % 10;                              v /= 10;
-                            hd.glyphs_range[0]  = v == 0 ? Font::space : Font::zero + v % 10; hd.glyphs_range[0] <<= bits; v /= 10;
-                            hd.glyphs_range[0] |= v == 0 ? Font::space : Font::zero + v % 10; hd.glyphs_range[0] <<= bits; v /= 10;
-                            hd.glyphs_range[0] |= v == 0 ? Font::space : Font::zero + v % 10; hd.glyphs_range[0] <<= bits; v /= 10;
-                            hd.glyphs_range[0] |= v == 0 ? Font::space : Font::zero + v % 10; hd.glyphs_range[0] <<= bits; v /= 10;
-                            hd.glyphs_range[0] |=                                Font::space; hd.glyphs_range[0] <<= bits;
-                            hd.glyphs_range[0] |=                             Font::arrow_to;
+                        // Far plane, Range, Fps (1/smoothDt). Never negative.
+                        uint3 v = uint3(max(float3(_ProjectionParams.z, range_ws, unity_DeltaTime.w), 0) * 100);
+                        uint3 glyphs[2];
+                        glyphs[1]  =                        Font::zero + v % 10; glyphs[1] <<= bits; v /= 10;
+                        glyphs[1] |=                        Font::zero + v % 10; glyphs[1] <<= bits; v /= 10;
+                        glyphs[1] |=                                  Font::dot; glyphs[1] <<= bits;
+                        glyphs[1] |=                        Font::zero + v % 10; glyphs[1] <<= bits; v /= 10;
+                        glyphs[1] |= v == 0 ? Font::space : Font::zero + v % 10; glyphs[1] <<= bits; v /= 10;
+                        glyphs[1] |= v == 0 ? Font::space : Font::zero + v % 10;                     v /= 10;
+                        glyphs[0]  = v == 0 ? Font::space : Font::zero + v % 10; glyphs[0] <<= bits; v /= 10;
+                        glyphs[0] |= v == 0 ? Font::space : Font::zero + v % 10; glyphs[0] <<= bits; v /= 10;
+                        glyphs[0] |= v == 0 ? Font::space : Font::zero + v % 10; glyphs[0] <<= bits; v /= 10;
+                        glyphs[0] |= v == 0 ? Font::space : Font::zero + v % 10; glyphs[0] <<= bits; v /= 10;
+                        glyphs[0] |=                                Font::space; glyphs[0] <<= bits;
+                        // If v > 0 at this stage, too large to be represented, use infinity symbol.
+                        glyphs[1] = v == 0 ? glyphs[1] : (Font::packed_spaces >> (32 - 5 * bits)) | (Font::infinity << (5 * bits));
+                        glyphs[0] = v == 0 ? glyphs[0] : Font::packed_spaces << bits;
+                        // Range undefined == 0. Signal with emptyset
+                        if(range_ws < 0.001) {
+                            glyphs[1].y = (Font::packed_spaces >> (32 - 5 * bits)) | (Font::emptyset << (5 * bits));
+                            glyphs[0].y = Font::packed_spaces << bits;
                         }
+                        // Finalize with field symbol and repack
+                        glyphs[0] |= uint3(Font::camera_prism, Font::arrow_to, Font::f);
+                        hd.glyphs[0].zw = uint2(glyphs[0].x, glyphs[1].x);
+                        hd.glyphs[1].zw = uint2(glyphs[0].y, glyphs[1].y);
+                        hd.glyphs[2].zw = uint2(glyphs[0].z, glyphs[1].z);
                     }
                     return hd;
                 }
@@ -565,7 +575,7 @@ Shader "Lereldarion/Overlay/HUD" {
 
                 Font font = Font::init();
                 float ui_sd = sdf_crosshair_0thickness(aligned_uv);
-                font.draw_glyphs_5x12(aligned_uv, input.hud_data.glyphs_xyzc, input.hud_data.glyphs_range, _Measurement_Digit_block_Position, _Font_Size);
+                font.draw_glyphs_6x12(aligned_uv, input.hud_data.glyphs, _Measurement_Digit_block_Position, _Font_Size);
 
                 GlyphRendererOld renderer_old = GlyphRendererOld::create();
                 float sdf = 1000 * elevation_display_sdf(aligned_uv, input.hud_data.elevation_radiants, renderer_old);
