@@ -3,7 +3,6 @@
 
 // Overlay at optical infinity (reflecting sight), with crosshair, rangefinder distance, and worldspace compass.
 // Attached to a flat surface with uniform UVs (like a quad), it will orient itself with the tangent space.
-// Can be adapted to use object space if necessary.
 Shader "Lereldarion/Overlay/HUD" {
     Properties {
         [Header(HUD)]
@@ -36,7 +35,6 @@ Shader "Lereldarion/Overlay/HUD" {
 
             #pragma target 5.0
             #pragma vertex vertex_stage
-            #pragma geometry geometry_stage
             #pragma fragment fragment_stage
             #pragma multi_compile_instancing
             
@@ -64,6 +62,23 @@ Shader "Lereldarion/Overlay/HUD" {
             float2 pow2(float2 v) { return v * v; }
             float glsl_mod(float x, float y) { return x - y * floor(x / y); }
             static const float pi = UNITY_PI;
+            static const float nan = asfloat(uint(-1)); // 0xFFF...FFF should be a quiet NaN
+
+            // Replacement for missing invP by d4rkpl4y3r (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
+            float4 ClipToViewPos(float4 clipPos) {
+                float4 normalizedClipPos = float4(clipPos.xyz / clipPos.w, 1);
+                normalizedClipPos.z = 1 - normalizedClipPos.z;
+                normalizedClipPos.z = normalizedClipPos.z * 2 - 1;
+                float4x4 invP = unity_CameraInvProjection;
+                // do projection flip on this, found empirically
+                invP._24 *= _ProjectionParams.x;
+                // this is needed for mirrors to work properly, found empirically
+                invP._42 *= -1;
+                float4 viewPos = mul(invP, normalizedClipPos);
+                // and the y coord needs to flip for flipped projection, found empirically
+                viewPos.y *= _ProjectionParams.x;
+                return viewPos;
+            }
 
             // SDF anti-alias blend
             // https://blog.pkh.me/p/44-perfecting-anti-aliasing-on-signed-distance-functions.html
@@ -303,68 +318,42 @@ Shader "Lereldarion/Overlay/HUD" {
 
             struct FragmentInput {
                 float4 position : SV_POSITION;
-                float3 camera_to_geometry_ws : CAMERA_TO_GEOMETRY_WS;
+                float3 ray_ws : RAY_WS;
                 HudData hud_data;
 
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
-            void vertex_stage (VertexInput input, out VertexInput output) {
-                output = input;
-            }
-
-            ////////////////////////////////////////////////////////////////////////////////////
-
-            [maxvertexcount(4)]
-            void geometry_stage(triangle VertexInput input[3], uint triangle_id : SV_PrimitiveID, inout TriangleStream<FragmentInput> stream) {
-                UNITY_SETUP_INSTANCE_ID(input[0]);
-                
-                FragmentInput output;
+            void vertex_stage (VertexInput input, uint vertex_id : SV_VertexID, out FragmentInput output) {
+                UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
+                float3 normal_ws = 0;
 
-                UNITY_BRANCH
                 if(_Overlay_Fullscreen == 1 && _VRChatMirrorMode == 0 && _VRChatCameraMode == 0) {
-                    // Fullscreen mode : generate a fullscreen quad for triangle 0 and discard others
-                    if (triangle_id == 0) {
-                        float3 normal_ws = normalize(mul((float3x3) unity_MatrixInvV, float3(0, 0, -1)));
-                        output.hud_data = HudData::compute(normal_ws, true);
+                    // Fullscreen mode : cover the screen with an oversized triangle
+                    if(vertex_id < 4) {
+                        // For some reason we seem to need the 4th vertex on some meshes even if the second triangle is entirely outside clip space. NaN effects ?
+                        float2 ndc = vertex_id & uint2(2, 1) ? 3.1 : -1; // [float2(-1, -1), float2(-1, 3.1), float2(3.1, -1)] to cover clip space [-1,1]^2
+                        output.position = float4(ndc, UNITY_NEAR_CLIP_VALUE, 1);
 
-                        // Generate in VS close to near clip plane. Having non CS positions is essential to return to WS later.
-                        float2 quad[4] = { float2(-1, -1), float2(-1, 1), float2(1, -1), float2(1, 1) };
-                        float near_plane_z = -_ProjectionParams.y;
-                        float2 tan_half_fov = 1 / unity_CameraProjection._m00_m11; // https://jsantell.com/3d-projection/
-                        // Add margins in case the matrix has some rotation/skew
-                        float quad_z = near_plane_z * 2; // z margin
-                        float quad_xy = quad_z * tan_half_fov * 1.2; // xy margin
-
-                        UNITY_UNROLL
-                        for(uint i = 0; i < 4; i += 1) {
-                            float4 position_vs = float4(quad[i] * quad_xy, quad_z, 1);
-                            output.position = UnityViewToClipPos(position_vs);
-                            output.camera_to_geometry_ws = mul((float3x3) unity_MatrixInvV, position_vs.xyz);
-                            stream.Append(output);
-                        }
+                        const float3 forward_vs = float3(0, 0, -1);
+                        output.ray_ws = mul(unity_MatrixInvV, ClipToViewPos(output.position).xyz);
+                        normal_ws = mul(unity_MatrixInvV, forward_vs);
+                    } else {
+                        output.position = nan.xxxx; // Vertex discard
+                        output.ray_ws = 0;
                     }
                 } else {
-                    // Normal geometry mode : forward triangle
+                    const float3 position_ws = mul(unity_ObjectToWorld, float4(input.position_os.xyz, 1)).xyz;
+                    output.position = UnityWorldToClipPos(position_ws);
+                    output.ray_ws = position_ws - _WorldSpaceCameraPos;
+                    normal_ws = UnityObjectToWorldNormal(input.normal_os);
+                }
 
-                    // Use TBN from vertex 0 to generate data.
-                    // TBN should be uniform on the mesh for the shader to work anyway.
-                    // Using WS TBN is no more costly than OS, because OS may be skewed by skinning in a skinned mesh.
-                    float3 normal_ws = UnityObjectToWorldNormal(input[0].normal_os);
-                    
-                    // Flip TBN to have forward orientation. This make the HUD 2 sided with mirror.
-                    float4 triangle_barycenter_os = (1./3.) * (input[0].position_os + input[1].position_os + input[2].position_os);
-                    float3 camera_to_triangle_ws = mul(unity_ObjectToWorld, triangle_barycenter_os).xyz - _WorldSpaceCameraPos;
-                    bool normal_is_forward = dot(normal_ws, camera_to_triangle_ws) >= 0;
-                    output.hud_data = HudData::compute(normal_ws, normal_is_forward);
-                    
-                    UNITY_UNROLL
-                    for(uint i = 0; i < 3; i += 1) {
-                        output.position = UnityObjectToClipPos(input[i].position_os);
-                        output.camera_to_geometry_ws = mul(unity_ObjectToWorld, input[i].position_os).xyz - _WorldSpaceCameraPos;
-                        stream.Append(output);
-                    }
+                if(isnan(output.position.x)) {
+                    output.hud_data = (HudData) 0;
+                } else {
+                    output.hud_data = HudData::compute(normal_ws, dot(normal_ws, output.ray_ws) >= 0);
                 }
             }
 
@@ -564,7 +553,7 @@ Shader "Lereldarion/Overlay/HUD" {
                 // polar_{x/y} are vectors in a plane facing the view.
                 // We want a measure of angle to view dir ~ sin angle to view dir = cos angle to these plane vectors.
                 // This create a set of polar "uvs" (non linear)
-                const float3 ray_ws = normalize(input.camera_to_geometry_ws);
+                const float3 ray_ws = normalize(input.ray_ws);
                 const float2 polar = float2(dot(ray_ws, input.hud_data.polar_x_ws), dot(ray_ws, input.hud_data.polar_y_ws));
 
                 Font font = Font::init();
