@@ -7,10 +7,8 @@ Shader "Lereldarion/Overlay/HUD" {
     Properties {
         [Header(HUD)]
         [HDR] _Color("Emissive color", Color) = (0, 1, 0, 1)
-        _Glyph_Texture_SDF ("Texture with SDF glyphs", 2D) = "white" {}
-        _MSDF_Glyph_Atlas ("MSDF glyph texture", 2D) = "" {}
-        _UI_Thickness ("UI thickness", Range(0, 0.003)) = 0.001
-        _Test_Glyph("Glyph", Vector) = (0, 0, 1, 0)
+        _Zoom("Zoom", Float) = 1
+        [HideInInspector] _MSDF_Glyph_Atlas ("MSDF glyph texture", 2D) = "" {}
 
         [Header(Overlay)]
         [ToggleUI] _Overlay_Fullscreen("Force Screenspace Fullscreen", Float) = 0
@@ -41,28 +39,34 @@ Shader "Lereldarion/Overlay/HUD" {
             #include "UnityCG.cginc"
 
             uniform fixed4 _Color;
+            uniform float _Zoom;
             uniform float _Overlay_Fullscreen;
-            uniform float _UI_Thickness;
-            uniform float4 _Test_Glyph;
-            static const float _Crosshair_Circle_Radius = 0.03;
-            static const float _Crosshair_Tick_Length = 0.04;
-            static const float _Font_Size = 0.023;
-            static const float2 _Measurement_Digit_block_Position = float2(-0.3, -0.2);
 
             uniform SamplerState sampler_clamp_bilinear;
-            uniform Texture2D<float> _Glyph_Texture_SDF; // LEGACY
             uniform Texture2D<float3> _MSDF_Glyph_Atlas;
 
             uniform float _VRChatMirrorMode;
             uniform float _VRChatCameraMode;
 
+            static const float _UI_Thickness = 0.001;
+            static const float _Crosshair_Circle_Radius = 0.03;
+            static const float _Crosshair_Tick_Length = 0.04;
+            static const float _Font_Size = 0.023;
+            static const float2 _Measurement_Digit_block_Position = float2(-0.3, -0.2);
+            static const float _Compass_Tick_Start = 0.2;
+            static const float _Compass_Tick_Length = 0.01;
+
+
             UNITY_DECLARE_DEPTH_TEXTURE(_CameraDepthTexture);
 
             // Utils
             float2 pow2(float2 v) { return v * v; }
+            float round_to_scale(float v, float scale) { return scale * round(v / scale); }
             float glsl_mod(float x, float y) { return x - y * floor(x / y); }
             static const float pi = UNITY_PI;
+            static const float one_deg_rad = pi / 180;
             static const float nan = asfloat(uint(-1)); // 0xFFF...FFF should be a quiet NaN
+            static const float f32_infinity = asfloat(0x7f800000);
 
             // Replacement for missing invP by d4rkpl4y3r (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
             float4 ClipToViewPos(float4 clipPos) {
@@ -96,11 +100,13 @@ Shader "Lereldarion/Overlay/HUD" {
 
             // Inigo Quilez https://iquilezles.org/articles/distfunctions2d/. Use negative for interior.
             // "psdf" = Pseudo SDF, with sharp corners. Useful to keep sharp corners when thickness is added.
-            float extrude_border_with_thickness(float sdf, float thickness) {
-                return abs(sdf) - thickness;
-            }
             float sdf_disk(float2 p, float radius) { return length(p) - radius; }
             float sdf_circle(float2 p, float radius) { return abs(sdf_disk(p, radius)); }
+            float sdf_segment_x(float2 p, float from, float to) {
+                float2 closest_segment_point = float2(clamp(p.x, from, to), 0);
+                return distance(p, closest_segment_point);
+            }
+            float sdf_interval_1d_centered(float x, float center, float radius) { return abs(x - center) - radius; }
 
             ////////////////////////////////////////////////////////////////////////////////////
             // MSDF monospace glyph rendering.
@@ -176,6 +182,16 @@ Shader "Lereldarion/Overlay/HUD" {
                         sampling_atlas_id = glyph;
                     }
                 }
+                void draw_3_glyphs(float2 p, uint3 glyphs, float2 position, float size) {
+                    const float scale = ascender_px / size;
+                    const float2 px = (p - position) * scale;
+                    if(all(0 <= px && px <= glyph_bbox_px * float2(3, 1))) {
+                        float column = floor(px.x / glyph_bbox_px.x);
+                        sampling_offset_px = px - float2(column * glyph_bbox_px.x, 0);
+                        sampling_inverse_scale = 1 / scale;
+                        sampling_atlas_id = glyphs[column];
+                    }
+                }
                 void draw_glyphs_6x12(float2 p, uint4 glyphs[3], float2 position, float size) {
                     // glyphs : X/Z=00fedcba, Y/W=00lkjihg
                     const float scale = ascender_px / size;
@@ -214,11 +230,12 @@ Shader "Lereldarion/Overlay/HUD" {
 
                     const float3 forward_normal_ws = normal_is_forward ? normal_ws : -normal_ws;
 
-                    // Similar skybox coordinate system but y stays aligned to worldspace vertical.
+                    // Axis of polar-like coordinate, aligned to world up
+                    const float polar_scale = 1. / _Zoom; // Scale here instead of fragment
                     const float3 up_direction_ws = float3(0, 1, 0);
                     const float3 horizontal_tangent = normalize(cross(forward_normal_ws, up_direction_ws));
-                    hd.polar_x_ws = horizontal_tangent * -1 /* needed but not sure why ; ht should go to the right */;
-                    hd.polar_y_ws = cross(horizontal_tangent, forward_normal_ws);
+                    hd.polar_x_ws = polar_scale * horizontal_tangent * -1 /* needed but not sure why ; ht should go to the right */;
+                    hd.polar_y_ws = polar_scale * cross(horizontal_tangent, forward_normal_ws);
 
                     // World azimuth and elevation of the surface forward normal
                     const float3 east_ws = float3(1, 0, 0);
@@ -358,194 +375,78 @@ Shader "Lereldarion/Overlay/HUD" {
             }
 
             ////////////////////////////////////////////////////////////////////////////////////
-            // Glyph SDF system.
-            
-            // SDF texture containing glyphs, and metadata for each glyph.
-            // Texture is generated using TextMeshPro and extracted afterwards (using screenshot of preview, as "Extract Atlas" option did not work).
-            // Metadata copied by hand for now.
-            struct GlyphDefinition {
-                // https://learnopengl.com/In-Practice/Text-Rendering
-                // all sizes in px with respect to the texture
-                float2 offset;
-                float2 size;
-                // offset of top left corner in px when placing the rect
-                float2 horizontal_bearing;
-                // offset for the next character origin
-                float advance;
-            };
-            static const GlyphDefinition glyph_definition_table[13] = {
-                { float2( 10,  10), float2(44, 64), float2(3.51, 62.84 - 64), 50.0 }, // 0
-                { float2(135, 173), float2(40, 62), float2(6.85, 61.92 - 62), 50.0 }, // 1
-                { float2(138,  10), float2(42, 63), float2(4.53, 62.84 - 63), 50.0 }, // 2
-                { float2( 10,  93), float2(44, 64), float2(3.42, 62.84 - 64), 50.0 }, // 3
-                { float2( 73,  10), float2(46, 62), float2(2.06, 61.92 - 62), 50.0 }, // 4
-                { float2( 73,  91), float2(44, 63), float2(3.60, 61.92 - 63), 50.0 }, // 5
-                { float2( 73, 173), float2(43, 64), float2(4.58, 62.84 - 64), 50.0 }, // 6
-                { float2(136,  92), float2(42, 62), float2(4.61, 61.92 - 62), 50.0 }, // 7
-                { float2( 10, 176), float2(44, 64), float2(3.91, 62.84 - 64), 50.0 }, // 8
-                { float2(199,  10), float2(42, 64), float2(4.22, 62.84 - 64), 50.0 }, // 9
-                { float2(197,  93), float2(45, 45), float2(4.39, 51.94 - 45), 52.6 }, // +
-                { float2(197, 157), float2(22,  8), float2(4.00, 27.42 -  8), 30.0 }, // -
-                { float2(194, 184), float2( 9, 10), float2(8.22,  9.63 - 10), 25.0 }, // .
-            };
-            static const float glyph_texture_resolution = 256; // resolution at which definition values have been computed
-            static const float2 glyph_max_box_size = float2(50.1, 70); // Used for UI spacing, chosen by hand from above data
-            
-
-            // A glyph renderer checks if each added character bounds contain the current pixel, and updates glyph texture uv when it does.
-            // At the end we can sample only once the texture to get the SDF value.
-            // This value is the value of the last character touching the current pixel for this renderer.
-            // Pros : only one texture sample.
-            // Cons : no overlap between characters of a renderer (but you can have overlaps by merging SDFs from 2 renderers).
-            struct GlyphRendererOld {
-                // Accumulator : which pixels to sample in the glyph table for the current pixel
-                float2 glyph_texture_coord;
-
-                void add(GlyphDefinition glyph, float2 pixel_uv, float2 origin_uv, float scale) {
-                    float2 glyph_drawing_space = (pixel_uv - origin_uv) / scale;
-                    float2 glyph_box_coord = glyph_drawing_space - glyph.horizontal_bearing;
-                    bool within_glyph_box = all(0 <= glyph_box_coord && glyph_box_coord <= glyph.size);
-                    if(within_glyph_box) {
-                        glyph_texture_coord = glyph_box_coord + glyph.offset;
-                    }
-                }
-
-                float2 add_left(uint glyph_id, float2 pixel_uv, float2 origin_uv, float scale) {
-                    GlyphDefinition glyph = glyph_definition_table[glyph_id];
-                    origin_uv = origin_uv - float2(glyph.advance * scale, 0);
-                    add(glyph, pixel_uv, origin_uv, scale);
-                    return origin_uv;
-                }
-
-                float2 add_right(uint glyph_id, float2 pixel_uv, float2 origin_uv, float scale) {
-                    GlyphDefinition glyph = glyph_definition_table[glyph_id];
-                    add(glyph, pixel_uv, origin_uv, scale);
-                    return origin_uv + float2(glyph.advance * scale, 0);
-                }
-
-                float sdf(float thickness) {
-                    const float2 glyph_texture_uv = glyph_texture_coord / glyph_texture_resolution;
-                    // Force mipmap 0, as we have artefacts with auto mipmap (derivatives are propably noisy). Texture is small anyway.
-                    const float tex_sdf = _Glyph_Texture_SDF.SampleLevel(sampler_clamp_bilinear, glyph_texture_uv, 0);
-                    // 1 interior, 0 exterior
-                    return (1 - tex_sdf) - thickness;
-                }
-
-                static GlyphRendererOld create() {
-                    GlyphRendererOld r;
-                    // Usually the corners are outside glyphs
-                    r.glyph_texture_coord = float2(0, 0);
-                    return r;
-                }
-            };
-
-            ////////////////////////////////////////////////////////////////////////////////////
             // Sight
 
-            float sdf_crosshair_0thickness(float2 p) {
-                float circle = abs(sdf_disk(p, _Crosshair_Circle_Radius));
+            float sdf_crosshair(float2 p) {
+                const float circle = abs(sdf_disk(p, _Crosshair_Circle_Radius));
 
                 // 4 symmetric segments. Use symmetry to only look at east one.
                 p = abs(p);
                 p = p.x > p.y ? p : p.yx;
-                float2 closest_segment_point = float2(clamp(p.x, _Crosshair_Circle_Radius - 0.5 * _Crosshair_Tick_Length, _Crosshair_Circle_Radius + 0.5 * _Crosshair_Tick_Length), 0);
-                float cross = distance(p, closest_segment_point);
+                const float cross = sdf_segment_x(p, _Crosshair_Circle_Radius - 0.5 * _Crosshair_Tick_Length, _Crosshair_Circle_Radius + 0.5 * _Crosshair_Tick_Length);
                 return min(circle, cross);
             }
 
             ////////////////////////////////////////////////////////////////////////////////////
             // Compass
 
-            float3 closest_step_positioning(float angle_rad, float step_interval_deg) {
-                const float step_interval_rad = step_interval_deg / 180. * pi;
-                const float unit_coordinate = angle_rad / step_interval_rad;
-                // Positionning in "unit" coordinates
-                const float closest_step = round(unit_coordinate);
-                const float angle_difference_to_closest_step = unit_coordinate - closest_step;
-                const float distance_to_closest_step = abs(angle_difference_to_closest_step); // [-0.5, 0.5]
-                return float3(closest_step, angle_difference_to_closest_step, distance_to_closest_step) * step_interval_rad;
+            float sdf_elevation(float2 p, float elevation_at_0, inout Font font, float polar_screen_scale) {
+                float sd = f32_infinity;
+
+                // Restrict to bounds, but allow gap for AA
+                const float vertical_bounds = sdf_interval_1d_centered(p.y, 0, 11 * one_deg_rad);
+                if(vertical_bounds < polar_screen_scale) {
+                    // "polar uv" are sin angle from normal ~ angle for center, in radiants
+                    p.y += elevation_at_0;
+    
+                    // Positionning
+                    const float closest_1deg = one_deg_rad * round(p.y / one_deg_rad);
+                    const float closest_10deg_unit = round(p.y / (10 * one_deg_rad)); // 1 = 10°
+                    const float closest_10deg = (10 * one_deg_rad) * closest_10deg_unit;
+                    const bool is_10deg_tick = abs(closest_10deg - closest_1deg) < 0.5 * one_deg_rad;
+    
+                    // Ticks
+                    const float tick_length = _Compass_Tick_Length * (is_10deg_tick ? 2 : 1);
+                    const float ticks = sdf_segment_x(p - float2(_Compass_Tick_Start, closest_1deg), 0, tick_length);
+                    sd = max(ticks, vertical_bounds);
+
+                    // Legend
+                    uint digit_10 = uint(abs(closest_10deg_unit));
+                    if(digit_10 > 9) { digit_10 = 18 - digit_10; } // 10 -> 8, after poles
+                    const uint3 glyphs = uint3(closest_10deg_unit < 0 ? Font::minus : Font::space, Font::zero + digit_10, Font::zero);
+                    font.draw_3_glyphs(p, glyphs, float2(_Compass_Tick_Start + 2.5 * _Compass_Tick_Length, closest_10deg - 0.4 * _Font_Size), _Font_Size);
+                }
+                return sd;
             }
 
-            float interval_1d_centered_sdf(float x, float center, float radius) {
-                return abs(x - center) - radius;
-            }
+            float sdf_azimuth(float2 p, float azimuth_at_0, inout Font font, float polar_screen_scale) {
+                float sd = f32_infinity;
 
-            float interval_1d_sdf(float x, float from, float to) {
-                return interval_1d_centered_sdf(x, (from + to) / 2., (to - from) / 2.);
-            }
+                const float horizontal_bounds = sdf_interval_1d_centered(p.x, 0, 20 * one_deg_rad);
+                if( horizontal_bounds < polar_screen_scale) {
+                    // "polar uv" are sin angle from normal ~ angle for center, in radiants
+                    p.x += azimuth_at_0;
+                    
+                    // Positionning
+                    const float closest_1deg = one_deg_rad * round(p.x / one_deg_rad);
+                    const float closest_10deg_unit = round(p.x / (10 * one_deg_rad)); // 1 = 10°
+                    const float closest_10deg = (10 * one_deg_rad) * closest_10deg_unit;
+                    const bool is_10deg_tick = abs(closest_10deg - closest_1deg) < 0.5 * one_deg_rad;
+    
+                    // Ticks
+                    const float tick_length = _Compass_Tick_Length * (is_10deg_tick ? 2 : 1);
+                    const float ticks = sdf_segment_x(p.yx - float2(_Compass_Tick_Start, closest_1deg), 0, tick_length);
+                    sd = max(ticks, horizontal_bounds);
 
-            float elevation_display_sdf(float2 uv, float elevation_at_0, inout GlyphRendererOld renderer) {
-                const float tick_start_x = 0.2;
-                const float tick_length = 0.01;
-                const float legend_start_x = tick_start_x + tick_length * 2.3;
-                const float glyph_scale = 0.0003;
-                
-                // UVs are sin angle from normal ~ angle for center, in radiants
-                const float pixel_elevation = elevation_at_0 + uv.y;
-
-                // Tick marks : vertical column & distance to nearest tick using round(y)
-                const float3 ticks_1_deg = closest_step_positioning(pixel_elevation, 1.);
-                const float3 ticks_10_deg = closest_step_positioning(pixel_elevation, 10.);
-                const float tick_1_sdf = max(interval_1d_sdf(uv.x, tick_start_x, tick_start_x + tick_length), ticks_1_deg.z);
-                const float tick_10_sdf = max(interval_1d_sdf(uv.x, tick_start_x, tick_start_x + tick_length * 2), ticks_10_deg.z);
-                const float window_sdf = interval_1d_centered_sdf(uv.y, 0., 11. / 180. * pi);
-                const float ticks_sdf = max(min(tick_1_sdf, tick_10_sdf), window_sdf);
-
-                // Display 2 digit degree count
-                if(window_sdf < 0 && interval_1d_sdf(uv.x, legend_start_x, legend_start_x + 3 * glyph_scale * glyph_max_box_size.x) < 0) {
-                    const float legend_elevation_rad = ticks_10_deg.x;
-                    float2 legend_origin = float2(legend_start_x, legend_elevation_rad - elevation_at_0) + glyph_scale * glyph_max_box_size * float2(0, -0.35);
-
-                    uint digit_10 = (uint) round(abs(legend_elevation_rad) * 18. / pi); // [-9, 9]
-
-                    UNITY_FLATTEN if(legend_elevation_rad < 0) {
-                        legend_origin = renderer.add_right(11 /* '-' */, uv, legend_origin, glyph_scale);
-                    } else {
-                        legend_origin.x += glyph_definition_table[11].advance * glyph_scale;
-                    }
-
-                    legend_origin = renderer.add_right(digit_10, uv, legend_origin, glyph_scale);
-                    renderer.add_right(0, uv, legend_origin, glyph_scale);
-                }          
-                return ticks_sdf;
-            }
-
-            float azimuth_display_sdf(float2 uv, float azimuth_at_0, inout GlyphRendererOld renderer) {
-                const float tick_start_y = 0.2;
-                const float tick_length = 0.01;
-                const float legend_start_y = tick_start_y + tick_length * 2.1;
-                const float glyph_scale = 0.0003;
-                
-                // UVs are sin angle from normal ~ angle for center, in radiants
-                const float pixel_azimuth = azimuth_at_0 + uv.x;
-
-                // Tick marks : vertical column & distance to nearest tick using round(y)
-                const float3 ticks_1_deg = closest_step_positioning(pixel_azimuth, 1.);
-                const float3 ticks_10_deg = closest_step_positioning(pixel_azimuth, 10.);
-                const float tick_1_sdf = max(interval_1d_sdf(uv.y, tick_start_y, tick_start_y + tick_length), ticks_1_deg.z);
-                const float tick_10_sdf = max(interval_1d_sdf(uv.y, tick_start_y, tick_start_y + tick_length * 2), ticks_10_deg.z);
-                const float window_sdf = interval_1d_centered_sdf(uv.x, 0., 15. / 180. * pi);
-                const float ticks_sdf = max(min(tick_1_sdf, tick_10_sdf), window_sdf);
-
-                // Display 2 digit degree count
-                if(window_sdf < 0 && interval_1d_sdf(uv.y, legend_start_y, legend_start_y + glyph_scale * glyph_max_box_size.y) < 0) {
-                    const float legend_azimuth_rad = ticks_10_deg.x;
-                    float2 legend_origin = float2(legend_azimuth_rad - azimuth_at_0, legend_start_y) + glyph_scale * glyph_max_box_size * float2(-1.5, 0.1);
-
-                    const float legend_azimuth_10deg = legend_azimuth_rad * 18. / pi;
-                    uint n = (uint) glsl_mod(legend_azimuth_10deg, 36.); // [0, 35]
-                    uint digit_10 = n % 10;
-                    uint digit_100 = n / 10;
-
-                    legend_origin = renderer.add_right(digit_100, uv, legend_origin, glyph_scale);
-                    legend_origin = renderer.add_right(digit_10, uv, legend_origin, glyph_scale);
-                    renderer.add_right(0, uv, legend_origin, glyph_scale);
-                }          
-                return ticks_sdf;
+                    // Legend
+                    const uint n = (uint) glsl_mod(closest_10deg_unit, 36); // [0, 35]
+                    const uint3 glyphs = uint3(n / 10, n % 10, 0) + Font::zero;
+                    font.draw_3_glyphs(p, glyphs, float2(closest_10deg, _Compass_Tick_Start + 2.5 * _Compass_Tick_Length), _Font_Size);
+                }
+                return sd;
             }
 
             ////////////////////////////////////////////////////////////////////////////////////
-            // Composition
 
             fixed4 fragment_stage (FragmentInput input) : SV_Target {
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
@@ -556,22 +457,18 @@ Shader "Lereldarion/Overlay/HUD" {
                 const float3 ray_ws = normalize(input.ray_ws);
                 const float2 polar = float2(dot(ray_ws, input.hud_data.polar_x_ws), dot(ray_ws, input.hud_data.polar_y_ws));
 
+                const float polar_screen_scale = compute_screenspace_scale_of_uv(polar);
+
+                // Generate UI elements (ticks, 0 thickness), and register glyphs.
                 Font font = Font::init();
-                float ui_sd = sdf_crosshair_0thickness(polar);
+                float ui_sd = sdf_crosshair(polar);
                 font.draw_glyphs_6x12(polar, input.hud_data.glyphs, _Measurement_Digit_block_Position, _Font_Size);
+                ui_sd = min(ui_sd, sdf_elevation(polar, input.hud_data.elevation_radiants, font, polar_screen_scale));
+                ui_sd = min(ui_sd, sdf_azimuth(polar, input.hud_data.azimuth_radiants, font, polar_screen_scale));
 
-                const float sd = min(ui_sd - _UI_Thickness, font.sdf());
-                float opacity = sdf_blend_with_aa(sd, compute_screenspace_scale_of_uv(polar));
-
-                // TODO remove legacy
-                GlyphRendererOld renderer_old = GlyphRendererOld::create();
-                float sdf = 1000 * elevation_display_sdf(polar, input.hud_data.elevation_radiants, renderer_old);
-                sdf = min(sdf, 1000 * azimuth_display_sdf(polar, input.hud_data.azimuth_radiants, renderer_old));
-                sdf = min(sdf, 3 * renderer_old.sdf(0.15)); // Scale for sharpness
-                const float positive_distance = max(0, sdf);
-                opacity = max(opacity, 1. - positive_distance * positive_distance);
-                
-                return _Color * opacity;
+                // Combine both sdfs
+                const float sd = min(ui_sd - _UI_Thickness, font.sdf());                
+                return _Color * sdf_blend_with_aa(sd, polar_screen_scale);
             }
 
             ENDCG
