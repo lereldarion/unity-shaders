@@ -27,7 +27,6 @@ Material:
     m_Floats:
     - _Grid_Line_Width_01: 0.02
     - _Grid_Size_Meters: 1
-    - _Grid_Zoom: 1
     - _Overlay_Fullscreen: 0
     m_Colors: []
   m_BuildTextureStacks: []

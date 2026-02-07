@@ -9,7 +9,9 @@ Shader "Lereldarion/Overlay/HUD" {
         [Header(HUD)]
         [HDR] _Color("Emissive color", Color) = (0, 1, 0, 1)
         _Glyph_Texture_SDF ("Texture with SDF glyphs", 2D) = "white" {}
+        _MSDF_Glyph_Atlas ("MSDF glyph texture", 2D) = "" {}
         _UI_Thickness ("UI thickness", Range(0, 0.003)) = 0.001
+        _Test_Glyph("Glyph", Vector) = (0, 0, 1, 0)
 
         [Header(Overlay)]
         [ToggleUI] _Overlay_Fullscreen("Force Screenspace Fullscreen", Float) = 0
@@ -43,9 +45,13 @@ Shader "Lereldarion/Overlay/HUD" {
             uniform fixed4 _Color;
             uniform float _Overlay_Fullscreen;
             uniform float _UI_Thickness;
+            uniform float4 _Test_Glyph;
+            static const float _Crosshair_Circle_Radius = 0.03;
+            static const float _Crosshair_Tick_Length = 0.04;
 
-            uniform Texture2D<float> _Glyph_Texture_SDF;
             uniform SamplerState sampler_clamp_bilinear;
+            uniform Texture2D<float> _Glyph_Texture_SDF; // LEGACY
+            uniform Texture2D<float3> _MSDF_Glyph_Atlas;
 
             uniform float _VRChatMirrorMode;
             uniform float _VRChatCameraMode;
@@ -71,17 +77,6 @@ Shader "Lereldarion/Overlay/HUD" {
                 return smoothstep(-w, w, -sdf);
             }
 
-            // MSDF textures utils https://github.com/Chlumsky/msdfgen
-            float median(float3 msd) { return max(min(msd.r, msd.g), min(max(msd.r, msd.g), msd.b)); }
-            float msdf_sample(Texture2D<float3> tex, float2 uv, float pixel_range, float2 texture_pixels) {
-                const float tex_sd = median(tex.SampleLevel(sampler_clamp_bilinear, uv, 0)) - 0.5;
-
-                // tex_sd is in [-0.5, 0.5]. It represents texture pixel ranges between [-pixel_range, pixel_range].
-                const float texture_pixel_sd = tex_sd * 2 * pixel_range;
-                const float texture_uv_sd = texture_pixel_sd / texture_pixels;
-                return -texture_uv_sd; // MSDF tooling generates inverted SDF (positive inside)
-            }
-
             // Inigo Quilez https://iquilezles.org/articles/distfunctions2d/. Use negative for interior.
             // "psdf" = Pseudo SDF, with sharp corners. Useful to keep sharp corners when thickness is added.
             float extrude_border_with_thickness(float sdf, float thickness) {
@@ -89,6 +84,76 @@ Shader "Lereldarion/Overlay/HUD" {
             }
             float sdf_disk(float2 p, float radius) { return length(p) - radius; }
             float sdf_circle(float2 p, float radius) { return abs(sdf_disk(p, radius)); }
+
+            ////////////////////////////////////////////////////////////////////////////////////
+            // MSDF monospace glyph rendering.
+            // https://github.com/Chlumsky/msdfgen
+            struct GlyphRenderer {
+                // Atlas info from MSDF metrics. Depend on the texture used !
+                static const float2 atlas_size_px = float2(256, 64);
+                static const float2 cell_size_px = float2(23, 29);
+                static const float atlas_distance_range_px = 2;
+                static const uint grid_columns = 11;
+                static const float2 glyph_bottom_left_em = float2(-0.02146, -0.07306); // metrics planeBounds, uniform due to monospace
+                static const float2 glyph_size_em = float2(0.62146, 0.7452) - glyph_bottom_left_em; // metrics planeBounds, uniform due to monospace
+                static const float2 cell_usable_size_px = cell_size_px - 1; // leave a half pixel on each side for padding
+                static const float2 em_to_px = cell_usable_size_px / glyph_size_em;
+                static const float advance_px = 0.6 * em_to_px.x;
+                static const float ascender_px = 1.005 * em_to_px.y; // used for font size
+                static const float line_height_px = 1.3 * em_to_px.y;
+                static const float glyph_left_px = glyph_bottom_left_em.x * em_to_px.x;
+
+                static const uint glyph_plus = 0;
+                static const uint glyph_minus = 1;
+                static const uint glyph_dot = 2;
+                static const uint glyph_0 = 3; // 0-9 as a sequence
+                static const uint glyph_colon = 13; // :
+                static const uint glyph_X = 14;
+                static const uint glyph_Y = 15;
+                static const uint glyph_Z = 16;
+                static const uint glyph_f = 17;
+                static const uint glyph_emptyset = 18;
+                static const uint glyph_range_to = 19;
+                static const uint glyph_infinity = 20;
+                static const uint glyph_camera_prism = 21;
+                static const uint glyph_space = 22; // Not a glyph, outside bounds, so will sample void
+
+                static float median(float3 msd) { return max(min(msd.r, msd.g), min(max(msd.r, msd.g), msd.b)); }
+
+                // Concept : track which coordinate to sample in the texture, and only sample the chosen glyph at the end
+                // Renderer "draw" methods only check if we have to draw a glyph, and register it.
+                // Does not support overlap.
+                float2 sampling_offset_px; // x : [0, advance_px] without left offset, y : [0, cell_usable_size_px.y]
+                float sampling_inverse_scale;
+                uint sampling_atlas_id;
+
+                static GlyphRenderer init() {
+                    GlyphRenderer r;
+                    r.sampling_offset_px = float2(0, 0);
+                    r.sampling_inverse_scale = 1;
+                    r.sampling_atlas_id = glyph_space;
+                    return r;
+                }
+                float sdf() {
+                    const uint atlas_row = sampling_atlas_id / grid_columns;
+                    const uint atlas_column = sampling_atlas_id - atlas_row * grid_columns;
+                    const float2 atlas_offset_px = float2(atlas_column * cell_size_px.x, atlas_size_px.y - cell_size_px.y * (atlas_row + 1)) + 0.5;
+                    const float2 glyph_offset_px = sampling_offset_px - float2(glyph_left_px, 0);
+                    const float tex_sd = median(_MSDF_Glyph_Atlas.SampleLevel(sampler_clamp_bilinear, (glyph_offset_px + atlas_offset_px) / atlas_size_px, 0)) - 0.5;
+                    // tex_sd is in [-0.5, 0.5]. It represents texture pixel ranges between [-msdf_pixel_range, msdf_pixel_range], using the inverse SDF direction.
+                    const float tex_sd_pixel = -tex_sd * 2 * atlas_distance_range_px;
+                    return sampling_inverse_scale * tex_sd_pixel;
+                }
+                void draw_glyph(float2 p, uint glyph, float2 position, float size) {
+                    const float scale = ascender_px / size;
+                    const float2 px = (p - position) * scale;
+                    if(all(0 <= px && px <= float2(advance_px, cell_usable_size_px.y))) {
+                        sampling_offset_px = px;
+                        sampling_inverse_scale = 1 / scale;
+                        sampling_atlas_id = glyph;
+                    }
+                }
+            };
 
             ////////////////////////////////////////////////////////////////////////////////////
 
@@ -102,8 +167,11 @@ Shader "Lereldarion/Overlay/HUD" {
                 nointerpolation float3 aligned_uv_x_ws : ALIGNED_UV_X;
                 nointerpolation float3 aligned_uv_y_ws : ALIGNED_UV_Y;
 
-                nointerpolation uint4 range_digits : RANGE_DIGITS;
+                // "X -123456.89" : 12 glyphs, 5 bits each. 6 per u32. XYZ = world xyz, W = range
+                //nointerpolation uint4 glyphs_12_6 : GLYPHS_12_6;
+                //nointerpolation uint4 glyphs_6_0 : GLYPHS_6_0;
 
+                nointerpolation uint4 range_digits : RANGE_DIGITS;
                 nointerpolation uint4 world_x_digits : WORLD_X_DIGITS;
                 nointerpolation uint4 world_y_digits : WORLD_Y_DIGITS;
                 nointerpolation uint4 world_z_digits : WORLD_Z_DIGITS;
@@ -293,7 +361,7 @@ Shader "Lereldarion/Overlay/HUD" {
             // This value is the value of the last character touching the current pixel for this renderer.
             // Pros : only one texture sample.
             // Cons : no overlap between characters of a renderer (but you can have overlaps by merging SDFs from 2 renderers).
-            struct GlyphRenderer {
+            struct GlyphRendererOld {
                 // Accumulator : which pixels to sample in the glyph table for the current pixel
                 float2 glyph_texture_coord;
 
@@ -327,8 +395,8 @@ Shader "Lereldarion/Overlay/HUD" {
                     return (1 - tex_sdf) - thickness;
                 }
 
-                static GlyphRenderer create() {
-                    GlyphRenderer r;
+                static GlyphRendererOld create() {
+                    GlyphRendererOld r;
                     // Usually the corners are outside glyphs
                     r.glyph_texture_coord = float2(0, 0);
                     return r;
@@ -338,7 +406,7 @@ Shader "Lereldarion/Overlay/HUD" {
             ////////////////////////////////////////////////////////////////////////////////////
             // Range
 
-            void draw_range_counter(float2 uv, uint4 digits, inout GlyphRenderer renderer) {
+            void draw_range_counter(float2 uv, uint4 digits, inout GlyphRendererOld renderer) {
                 const float scale = 0.0004;
                 float2 origin = float2(0, -0.07);
                 origin = renderer.add_right(digits[0], uv, origin, scale);
@@ -350,7 +418,7 @@ Shader "Lereldarion/Overlay/HUD" {
             ////////////////////////////////////////////////////////////////////////////////////
             // World position block
 
-            void draw_world_position(float2 uv, float2 origin, float scale, bool negative, uint4 digits, inout GlyphRenderer renderer) {
+            void draw_world_position(float2 uv, float2 origin, float scale, bool negative, uint4 digits, inout GlyphRendererOld renderer) {
                 origin = renderer.add_left(digits[3], uv, origin, scale);
                 origin = renderer.add_left(digits[2], uv, origin, scale);
                 origin = renderer.add_left(digits[1], uv, origin, scale);
@@ -360,7 +428,7 @@ Shader "Lereldarion/Overlay/HUD" {
                 }
             }
 
-            void draw_world_position_block(float2 uv, HudData hud_data, inout GlyphRenderer renderer) {
+            void draw_world_position_block(float2 uv, HudData hud_data, inout GlyphRendererOld renderer) {
                 #if UNITY_SINGLE_PASS_STEREO // Consistent position. Digits are computed in vertex, but sign is cheap to do there.
                 const float3 camera_pos_ws = unity_StereoWorldSpaceCameraPos[0];
                 #else
@@ -384,12 +452,12 @@ Shader "Lereldarion/Overlay/HUD" {
             // Sight
 
             float sdf_crosshair_0thickness(float2 p) {
-                float circle = abs(sdf_disk(p, 0.04));
+                float circle = abs(sdf_disk(p, _Crosshair_Circle_Radius));
 
                 // 4 symmetric segments. Use symmetry to only look at east one.
                 p = abs(p);
                 p = p.x > p.y ? p : p.yx;
-                float2 closest_segment_point = float2(clamp(p.x, 0.01, 0.07), 0);
+                float2 closest_segment_point = float2(clamp(p.x, _Crosshair_Circle_Radius - 0.5 * _Crosshair_Tick_Length, _Crosshair_Circle_Radius + 0.5 * _Crosshair_Tick_Length), 0);
                 float cross = distance(p, closest_segment_point);
                 return min(circle, cross);
             }
@@ -415,7 +483,7 @@ Shader "Lereldarion/Overlay/HUD" {
                 return interval_1d_centered_sdf(x, (from + to) / 2., (to - from) / 2.);
             }
 
-            float elevation_display_sdf(float2 uv, float elevation_at_0, inout GlyphRenderer renderer) {
+            float elevation_display_sdf(float2 uv, float elevation_at_0, inout GlyphRendererOld renderer) {
                 const float tick_start_x = 0.2;
                 const float tick_length = 0.01;
                 const float legend_start_x = tick_start_x + tick_length * 2.3;
@@ -451,7 +519,7 @@ Shader "Lereldarion/Overlay/HUD" {
                 return ticks_sdf;
             }
 
-            float azimuth_display_sdf(float2 uv, float azimuth_at_0, inout GlyphRenderer renderer) {
+            float azimuth_display_sdf(float2 uv, float azimuth_at_0, inout GlyphRendererOld renderer) {
                 const float tick_start_y = 0.2;
                 const float tick_length = 0.01;
                 const float legend_start_y = tick_start_y + tick_length * 2.1;
@@ -499,16 +567,19 @@ Shader "Lereldarion/Overlay/HUD" {
 
                 const float screenspace_scale_of_uv = compute_screenspace_scale_of_uv(aligned_uv); // Both uv sets should have the same scale
 
+                GlyphRenderer renderer = GlyphRenderer::init();
                 float ui_sd = sdf_crosshair_0thickness(rotating_uv);
+                renderer.draw_glyph(aligned_uv, _Test_Glyph.w, _Test_Glyph.xy, _Test_Glyph.z);
 
-                GlyphRenderer renderer = GlyphRenderer::create();
-                draw_range_counter(rotating_uv, input.hud_data.range_digits, renderer);
-                draw_world_position_block(rotating_uv, input.hud_data, renderer);
-                float sdf = 1000 * elevation_display_sdf(aligned_uv, input.hud_data.elevation_radiants, renderer);
-                sdf = min(sdf, 1000 * azimuth_display_sdf(aligned_uv, input.hud_data.azimuth_radiants, renderer));
-                sdf = min(sdf, 3 * renderer.sdf(0.15)); // Scale for sharpness
+                GlyphRendererOld renderer_old = GlyphRendererOld::create();
+                draw_range_counter(rotating_uv, input.hud_data.range_digits, renderer_old);
+                draw_world_position_block(rotating_uv, input.hud_data, renderer_old);
+                float sdf = 1000 * elevation_display_sdf(aligned_uv, input.hud_data.elevation_radiants, renderer_old);
+                sdf = min(sdf, 1000 * azimuth_display_sdf(aligned_uv, input.hud_data.azimuth_radiants, renderer_old));
+                sdf = min(sdf, 3 * renderer_old.sdf(0.15)); // Scale for sharpness
 
-                float opacity = sdf_blend_with_aa(ui_sd - _UI_Thickness, screenspace_scale_of_uv);
+                const float sd = min(ui_sd - _UI_Thickness, renderer.sdf());
+                float opacity = sdf_blend_with_aa(sd, screenspace_scale_of_uv);
                 
                 // TODO remove legacy blurring
                 const float positive_distance = max(0, sdf);
