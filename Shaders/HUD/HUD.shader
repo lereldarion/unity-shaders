@@ -185,8 +185,8 @@ Shader "Lereldarion/Overlay/HUD" {
             // Data that can be precomputed at vertex stage.
             struct HudData {
                 // Unit vectors that stay aligned to the vertical direction
-                nointerpolation float3 aligned_uv_x_ws : ALIGNED_UV_X;
-                nointerpolation float3 aligned_uv_y_ws : ALIGNED_UV_Y;
+                nointerpolation float3 polar_x_ws : POLAR_X;
+                nointerpolation float3 polar_y_ws : POLAR_Y;
 
                 // "X -123456.89" : 12 glyphs, 5 bits each. 6 per u32. 
                 nointerpolation uint4 glyphs[3] : GLYPHS; // X/Z=00fedcba, Y/W=00lkjihg, [i].XY = world pos, [i].ZW = {far plane, range, fps}
@@ -194,18 +194,16 @@ Shader "Lereldarion/Overlay/HUD" {
                 nointerpolation float azimuth_radiants : AZIMUTH;
                 nointerpolation float elevation_radiants : ELEVATION;
 
-                static HudData compute(float3 normal_ws, float3 tangent_ws, bool normal_is_forward) {
+                static HudData compute(float3 normal_ws, bool normal_is_forward) {
                     HudData hd;
 
-                    float forward_flip = normal_is_forward ? 1 : -1;
-                    float3 forward_normal_ws = normal_ws * forward_flip;
-                    float3 forward_tangent_ws = tangent_ws * forward_flip;
+                    const float3 forward_normal_ws = normal_is_forward ? normal_ws : -normal_ws;
 
                     // Similar skybox coordinate system but y stays aligned to worldspace vertical.
                     const float3 up_direction_ws = float3(0, 1, 0);
                     const float3 horizontal_tangent = normalize(cross(forward_normal_ws, up_direction_ws));
-                    hd.aligned_uv_x_ws = horizontal_tangent * -1 /* needed but not sure why ; ht should go to the right */;
-                    hd.aligned_uv_y_ws = cross(horizontal_tangent, forward_normal_ws);
+                    hd.polar_x_ws = horizontal_tangent * -1 /* needed but not sure why ; ht should go to the right */;
+                    hd.polar_y_ws = cross(horizontal_tangent, forward_normal_ws);
 
                     // World azimuth and elevation of the surface forward normal
                     const float3 east_ws = float3(1, 0, 0);
@@ -300,7 +298,6 @@ Shader "Lereldarion/Overlay/HUD" {
             struct VertexInput {
                 float4 position_os : POSITION;
                 float3 normal_os : NORMAL;
-                float4 tangent_os : TANGENT;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
@@ -330,8 +327,7 @@ Shader "Lereldarion/Overlay/HUD" {
                     // Fullscreen mode : generate a fullscreen quad for triangle 0 and discard others
                     if (triangle_id == 0) {
                         float3 normal_ws = normalize(mul((float3x3) unity_MatrixInvV, float3(0, 0, -1)));
-                        float3 tangent_ws = normalize(mul((float3x3) unity_MatrixInvV, float3(1, 0, 0)));
-                        output.hud_data = HudData::compute(normal_ws, tangent_ws, true);
+                        output.hud_data = HudData::compute(normal_ws, true);
 
                         // Generate in VS close to near clip plane. Having non CS positions is essential to return to WS later.
                         float2 quad[4] = { float2(-1, -1), float2(-1, 1), float2(1, -1), float2(1, 1) };
@@ -356,13 +352,12 @@ Shader "Lereldarion/Overlay/HUD" {
                     // TBN should be uniform on the mesh for the shader to work anyway.
                     // Using WS TBN is no more costly than OS, because OS may be skewed by skinning in a skinned mesh.
                     float3 normal_ws = UnityObjectToWorldNormal(input[0].normal_os);
-                    float3 tangent_ws = UnityObjectToWorldNormal(input[0].tangent_os.xyz);
                     
                     // Flip TBN to have forward orientation. This make the HUD 2 sided with mirror.
                     float4 triangle_barycenter_os = (1./3.) * (input[0].position_os + input[1].position_os + input[2].position_os);
                     float3 camera_to_triangle_ws = mul(unity_ObjectToWorld, triangle_barycenter_os).xyz - _WorldSpaceCameraPos;
                     bool normal_is_forward = dot(normal_ws, camera_to_triangle_ws) >= 0;
-                    output.hud_data = HudData::compute(normal_ws, tangent_ws, normal_is_forward);
+                    output.hud_data = HudData::compute(normal_ws, normal_is_forward);
                     
                     UNITY_UNROLL
                     for(uint i = 0; i < 3; i += 1) {
@@ -566,26 +561,24 @@ Shader "Lereldarion/Overlay/HUD" {
             fixed4 fragment_stage (FragmentInput input) : SV_Target {
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
 
-                // i.{aligned/rotating}_uv_{x/y}_os are vectors in a plane facing the view.
+                // polar_{x/y} are vectors in a plane facing the view.
                 // We want a measure of angle to view dir ~ sin angle to view dir = cos angle to these plane vectors.
+                // This create a set of polar "uvs" (non linear)
                 const float3 ray_ws = normalize(input.camera_to_geometry_ws);
-                const float2 aligned_uv = float2(dot(ray_ws, input.hud_data.aligned_uv_x_ws), dot(ray_ws, input.hud_data.aligned_uv_y_ws));
-
-                const float screenspace_scale_of_uv = compute_screenspace_scale_of_uv(aligned_uv); // Both uv sets should have the same scale
+                const float2 polar = float2(dot(ray_ws, input.hud_data.polar_x_ws), dot(ray_ws, input.hud_data.polar_y_ws));
 
                 Font font = Font::init();
-                float ui_sd = sdf_crosshair_0thickness(aligned_uv);
-                font.draw_glyphs_6x12(aligned_uv, input.hud_data.glyphs, _Measurement_Digit_block_Position, _Font_Size);
-
-                GlyphRendererOld renderer_old = GlyphRendererOld::create();
-                float sdf = 1000 * elevation_display_sdf(aligned_uv, input.hud_data.elevation_radiants, renderer_old);
-                sdf = min(sdf, 1000 * azimuth_display_sdf(aligned_uv, input.hud_data.azimuth_radiants, renderer_old));
-                sdf = min(sdf, 3 * renderer_old.sdf(0.15)); // Scale for sharpness
+                float ui_sd = sdf_crosshair_0thickness(polar);
+                font.draw_glyphs_6x12(polar, input.hud_data.glyphs, _Measurement_Digit_block_Position, _Font_Size);
 
                 const float sd = min(ui_sd - _UI_Thickness, font.sdf());
-                float opacity = sdf_blend_with_aa(sd, screenspace_scale_of_uv);
-                
-                // TODO remove legacy blurring
+                float opacity = sdf_blend_with_aa(sd, compute_screenspace_scale_of_uv(polar));
+
+                // TODO remove legacy
+                GlyphRendererOld renderer_old = GlyphRendererOld::create();
+                float sdf = 1000 * elevation_display_sdf(polar, input.hud_data.elevation_radiants, renderer_old);
+                sdf = min(sdf, 1000 * azimuth_display_sdf(polar, input.hud_data.azimuth_radiants, renderer_old));
+                sdf = min(sdf, 3 * renderer_old.sdf(0.15)); // Scale for sharpness
                 const float positive_distance = max(0, sdf);
                 opacity = max(opacity, 1. - positive_distance * positive_distance);
                 
