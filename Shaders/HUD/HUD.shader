@@ -173,18 +173,18 @@ Shader "Lereldarion/Overlay/HUD" {
                     const float tex_sd_pixel = -tex_sd * 2 * atlas_distance_range_px;
                     return sampling_inverse_scale * tex_sd_pixel;
                 }
-                void draw_glyph(float2 p, uint glyph, float2 position, float size) {
-                    const float scale = ascender_px / size;
-                    const float2 px = (p - position) * scale;
+                void draw_glyph(float2 p, uint glyph, float2 offset_bbox) {
+                    const float scale = ascender_px / _Font_Size;
+                    const float2 px = p * scale - offset_bbox * glyph_bbox_px;
                     if(all(0 <= px && px <= glyph_bbox_px)) {
                         sampling_offset_px = px;
                         sampling_inverse_scale = 1 / scale;
                         sampling_atlas_id = glyph;
                     }
                 }
-                void draw_3_glyphs(float2 p, uint3 glyphs, float2 position, float size) {
-                    const float scale = ascender_px / size;
-                    const float2 px = (p - position) * scale;
+                void draw_3_glyphs(float2 p, uint3 glyphs, float2 offset_bbox) {
+                    const float scale = ascender_px / _Font_Size;
+                    const float2 px = p * scale - offset_bbox * glyph_bbox_px;
                     if(all(0 <= px && px <= glyph_bbox_px * float2(3, 1))) {
                         float column = floor(px.x / glyph_bbox_px.x);
                         sampling_offset_px = px - float2(column * glyph_bbox_px.x, 0);
@@ -192,10 +192,10 @@ Shader "Lereldarion/Overlay/HUD" {
                         sampling_atlas_id = glyphs[column];
                     }
                 }
-                void draw_glyphs_6x12(float2 p, uint4 glyphs[3], float2 position, float size) {
+                void draw_glyphs_6x12(float2 p, uint4 glyphs[3], float2 offset_bbox) {
                     // glyphs : X/Z=00fedcba, Y/W=00lkjihg
-                    const float scale = ascender_px / size;
-                    const float2 px = (p - position) * scale;
+                    const float scale = ascender_px / _Font_Size;
+                    const float2 px = p * scale - offset_bbox * glyph_bbox_px;
                     if(all(0 <= px && px <= glyph_bbox_px * float2(12, 6))) {
                         float2 column_row = floor(px / glyph_bbox_px);
                         sampling_offset_px = px - column_row * glyph_bbox_px;
@@ -414,7 +414,7 @@ Shader "Lereldarion/Overlay/HUD" {
                     uint digit_10 = uint(abs(closest_10deg_unit));
                     if(digit_10 > 9) { digit_10 = 18 - digit_10; } // 10 -> 8, after poles
                     const uint3 glyphs = uint3(closest_10deg_unit < 0 ? Font::minus : Font::space, Font::zero + digit_10, Font::zero);
-                    font.draw_3_glyphs(p, glyphs, float2(_Compass_Tick_Start + 2.5 * _Compass_Tick_Length, closest_10deg - 0.4 * _Font_Size), _Font_Size);
+                    font.draw_3_glyphs(p - float2(_Compass_Tick_Start + 2.5 * _Compass_Tick_Length, closest_10deg), glyphs, float2(0, -0.5));
                 }
                 return sd;
             }
@@ -441,7 +441,7 @@ Shader "Lereldarion/Overlay/HUD" {
                     // Legend
                     const uint n = (uint) glsl_mod(closest_10deg_unit, 36); // [0, 35]
                     const uint3 glyphs = uint3(n / 10, n % 10, 0) + Font::zero;
-                    font.draw_3_glyphs(p, glyphs, float2(closest_10deg, _Compass_Tick_Start + 2.5 * _Compass_Tick_Length), _Font_Size);
+                    font.draw_3_glyphs(p - float2(closest_10deg, _Compass_Tick_Start + 2.5 * _Compass_Tick_Length), glyphs, float2(-1.5, 0));
                 }
                 return sd;
             }
@@ -462,7 +462,7 @@ Shader "Lereldarion/Overlay/HUD" {
                 // Generate UI elements (ticks, 0 thickness), and register glyphs.
                 Font font = Font::init();
                 float ui_sd = sdf_crosshair(polar);
-                font.draw_glyphs_6x12(polar, input.hud_data.glyphs, _Measurement_Digit_block_Position, _Font_Size);
+                font.draw_glyphs_6x12(polar - _Measurement_Digit_block_Position, input.hud_data.glyphs, 0);
                 ui_sd = min(ui_sd, sdf_elevation(polar, input.hud_data.elevation_radiants, font, polar_screen_scale));
                 ui_sd = min(ui_sd, sdf_azimuth(polar, input.hud_data.azimuth_radiants, font, polar_screen_scale));
 
