@@ -111,6 +111,7 @@ Shader "Lereldarion/Overlay/HUD" {
             ////////////////////////////////////////////////////////////////////////////////////
             // MSDF monospace glyph rendering.
             // https://github.com/Chlumsky/msdfgen
+            // Charset : ['0', '9'] "XYZ+-.∞ø:◁⇥f" GeistMono-Regular uniform grid rectangle texture
             struct Font {
                 // Atlas info from MSDF metrics. Depend on the texture used !
                 static const float2 atlas_size_px = float2(256, 64);
