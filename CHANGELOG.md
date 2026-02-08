@@ -1,6 +1,6 @@
 # Changelog
 
-## [unreleased]
+## 1.4.1 - 08/02/2026
 - Grid : remove broken grid for infnite distance (skybox)
 - HUD: Depth texture absence detection not possible, remove failed attempt
 - All overlays : fix broken vertex-only screenspace with mesh vertex order toggle
