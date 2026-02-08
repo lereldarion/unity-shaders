@@ -264,7 +264,7 @@ Shader "Lereldarion/Overlay/HUD" {
                     screen_pos.xy = screen_pos.xy * unity_StereoScaleOffset[0].xy + unity_StereoScaleOffset[0].zw * screen_pos.w;
                     #endif
                     const float depth_texture_value = SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(screen_pos.xy / screen_pos.w, 0, 4 /* mipmap level = average a little bit */));
-                    const float range_ws = LinearEyeDepth(depth_texture_value) / sample_point_cs.w;
+                    const float range_ws = LinearEyeDepth(depth_texture_value) / sample_point_cs.w; // Cannot detect presence of Depth texture, this may be garbage.
 
                     // Pre compute position glyphs. Simplifies the fragment code.
                     const uint bits = Font::bits; // 5 bits, 6 glyphs bit packed per uint
@@ -311,11 +311,6 @@ Shader "Lereldarion/Overlay/HUD" {
                         // If v > 0 at this stage, too large to be represented, use infinity symbol.
                         glyphs[1] = v == 0 ? glyphs[1] : (Font::packed_spaces >> (32 - 5 * bits)) | (Font::infinity << (5 * bits));
                         glyphs[0] = v == 0 ? glyphs[0] : Font::packed_spaces << bits;
-                        // Range undefined == 0. Signal with emptyset
-                        if(range_ws < 0.001) {
-                            glyphs[1].y = (Font::packed_spaces >> (32 - 5 * bits)) | (Font::emptyset << (5 * bits));
-                            glyphs[0].y = Font::packed_spaces << bits;
-                        }
                         // Finalize with field symbol and repack
                         glyphs[0] |= uint3(Font::camera_prism, Font::arrow_to, Font::f);
                         hd.glyphs[0].zw = uint2(glyphs[0].x, glyphs[1].x);

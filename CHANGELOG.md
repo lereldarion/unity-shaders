@@ -2,6 +2,7 @@
 
 ## [unreleased]
 - Grid : remove broken grid for infnite distance (skybox)
+- HUD: Depth texture absence detection not possible, remove failed attempt
 
 ## 1.4.0 - 08/02/2026
 - Add a changelog with previous release history
