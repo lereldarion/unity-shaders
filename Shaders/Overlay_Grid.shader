@@ -118,6 +118,7 @@ Shader "Lereldarion/Overlay/Grid" {
                     // HLSLSupport.hlsl : DepthTexture is a TextureArray in SPS-I, so its size should be safe to use to get uvs.
                     float2 depth_texture_uv = shifted_sv_position * _CameraDepthTexture_TexelSize.xy;
                     float raw = SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(depth_texture_uv, 0, 0)); // [0,1]
+                    if(!(0 < raw && raw < 1)) { discard; } // Remove skybox grid (broken)
 
                     float2 clipPos = ((shifted_sv_position / _ScreenParams.xy) * 2 - 1) * float2(1, -1);
                     #ifdef UNITY_SINGLE_PASS_STEREO

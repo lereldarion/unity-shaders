@@ -1,5 +1,8 @@
 # Changelog
 
+## [unreleased]
+- Grid : remove broken grid for infnite distance (skybox)
+
 ## 1.4.0 - 08/02/2026
 - Add a changelog with previous release history
 - Remove materials from released assets. Put them in a `Samples/` directory for backward compatibility
