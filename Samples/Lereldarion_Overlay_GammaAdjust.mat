@@ -27,5 +27,7 @@ Material:
     m_Floats:
     - _Gamma_Adjust_Value: 0
     - _Overlay_Fullscreen: 0
+    - _Overlay_Screenspace_Vertex_Reorder: 0
+    - _Transmit_Emission: 1
     m_Colors: []
   m_BuildTextureStacks: []

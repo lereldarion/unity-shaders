@@ -12,6 +12,7 @@ Shader "Lereldarion/Overlay/HUD" {
 
         [Header(Overlay)]
         [ToggleUI] _Overlay_Fullscreen("Force Screenspace Fullscreen", Float) = 0
+        [ToggleUI] _Overlay_Screenspace_Vertex_Reorder("Fix broken fullscreen (missing triangle due to mesh vertex order) ; mesh dependent", Float) = 0
     }
     SubShader {
         Tags {
@@ -41,6 +42,7 @@ Shader "Lereldarion/Overlay/HUD" {
             uniform fixed4 _Color;
             uniform float _Zoom;
             uniform float _Overlay_Fullscreen;
+            uniform float _Overlay_Screenspace_Vertex_Reorder;
 
             uniform SamplerState sampler_clamp_bilinear;
             uniform Texture2D<float3> _MSDF_Glyph_Atlas;
@@ -55,7 +57,6 @@ Shader "Lereldarion/Overlay/HUD" {
             static const float2 _Measurement_Digit_block_Position = float2(-0.3, -0.2);
             static const float _Compass_Tick_Start = 0.2;
             static const float _Compass_Tick_Length = 0.01;
-
 
             UNITY_DECLARE_DEPTH_TEXTURE(_CameraDepthTexture);
 
@@ -344,14 +345,15 @@ Shader "Lereldarion/Overlay/HUD" {
                 bool compute_hud_data = true;
 
                 if(_Overlay_Fullscreen == 1 && _VRChatMirrorMode == 0 && _VRChatCameraMode == 0) {
-                    // Fullscreen mode : cover the screen with an oversized triangle
+                    // Fullscreen mode : cover the screen with a quad by redirecting existing vertices
                     if(vertex_id < 4) {
-                        // For some reason we seem to need the 4th vertex on some meshes even if the second triangle is entirely outside clip space. NaN effects ?
-                        float2 ndc = vertex_id & uint2(2, 1) ? 3.1 : -1; // [float2(-1, -1), float2(-1, 3.1), float2(3.1, -1)] to cover clip space [-1,1]^2
+                        float2 ndc = vertex_id & uint2(2, 1) ? 1 : -1; // [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+                        if(_Overlay_Screenspace_Vertex_Reorder && (vertex_id & 1)) { ndc.x *= -1; }
                         output.position = float4(ndc, UNITY_NEAR_CLIP_VALUE, 1);
 
                         const float3 forward_vs = float3(0, 0, -1);
-                        output.ray_ws = mul(unity_MatrixInvV, ClipToViewPos(output.position).xyz);
+                        const float4 position_vs_w = ClipToViewPos(output.position);
+                        output.ray_ws = mul(unity_MatrixInvV, position_vs_w.xyz / position_vs_w.w); 
                         normal_ws = mul(unity_MatrixInvV, forward_vs);
                     } else {
                         output.position = nan.xxxx; // Vertex discard

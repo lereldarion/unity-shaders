@@ -30,6 +30,7 @@ Material:
     m_Ints: []
     m_Floats:
     - _Overlay_Fullscreen: 0
+    - _Overlay_Screenspace_Vertex_Reorder: 0
     - _Zoom: 1
     m_Colors:
     - _Color: {r: 0, g: 1, b: 0, a: 1}

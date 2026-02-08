@@ -28,5 +28,6 @@ Material:
     - _Grid_Line_Width_01: 0.02
     - _Grid_Size_Meters: 1
     - _Overlay_Fullscreen: 0
+    - _Overlay_Screenspace_Vertex_Reorder: 0
     m_Colors: []
   m_BuildTextureStacks: []

@@ -12,6 +12,7 @@ Shader "Lereldarion/Overlay/GammaAdjust" {
 
         [Header(Overlay)]
         [ToggleUI] _Overlay_Fullscreen("Force Screenspace Fullscreen", Float) = 0
+        [ToggleUI] _Overlay_Screenspace_Vertex_Reorder("Fix broken fullscreen (missing triangle due to mesh vertex order) ; mesh dependent", Float) = 0
     }
     SubShader {
         Tags {
@@ -47,10 +48,15 @@ Shader "Lereldarion/Overlay/GammaAdjust" {
                 UNITY_VERTEX_OUTPUT_STEREO
             };
             
+            uniform float _Gamma_Adjust_Value;
+            uniform float _Transmit_Emission;
             uniform float _Overlay_Fullscreen;
+            uniform float _Overlay_Screenspace_Vertex_Reorder;
+            
             uniform float _VRChatMirrorMode;
             uniform float _VRChatCameraMode;
-            uniform float _Gamma_Adjust_Value;
+            
+            UNITY_DECLARE_TEX2D(_GammaAdjustGrabTexture);
 
             static const float nan = asfloat(uint(-1)); // 0xFFF...FFF should be a quiet NaN
             
@@ -59,10 +65,10 @@ Shader "Lereldarion/Overlay/GammaAdjust" {
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
 
                 if(_Overlay_Fullscreen == 1 && _VRChatMirrorMode == 0 && _VRChatCameraMode == 0) {
-                    // Fullscreen mode : cover the screen with an oversized triangle
+                    // Fullscreen mode : cover the screen with a quad by redirecting existing vertices
                     if(vertex_id < 4) {
-                        // For some reason we seem to need the 4th vertex on some meshes even if the second triangle is entirely outside clip space. NaN effects ?
-                        float2 ndc = vertex_id & uint2(2, 1) ? 3.1 : -1; // [float2(-1, -1), float2(-1, 3.1), float2(3.1, -1)] to cover clip space [-1,1]^2
+                        float2 ndc = vertex_id & uint2(2, 1) ? 1 : -1; // [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+                        if(_Overlay_Screenspace_Vertex_Reorder && (vertex_id & 1)) { ndc.x *= -1; }
                         output.position = float4(ndc, UNITY_NEAR_CLIP_VALUE, 1);
                     } else {
                         output.position = nan.xxxx; // Vertex discard
@@ -75,9 +81,6 @@ Shader "Lereldarion/Overlay/GammaAdjust" {
                 output.gamma = exp(_Gamma_Adjust_Value); // exp(3 * (0.3 - _Gamma_Adjust_Value));
             }
             
-            uniform float _Transmit_Emission;
-            UNITY_DECLARE_TEX2D(_GammaAdjustGrabTexture);
-
             fixed4 fragment_stage (FragmentInput i) : SV_Target {
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(i);
 

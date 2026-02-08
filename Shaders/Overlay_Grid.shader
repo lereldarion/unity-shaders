@@ -16,6 +16,7 @@ Shader "Lereldarion/Overlay/Grid" {
 
         [Header(Overlay)]
         [ToggleUI] _Overlay_Fullscreen("Force Screenspace Fullscreen", Float) = 0
+        [ToggleUI] _Overlay_Screenspace_Vertex_Reorder("Fix broken fullscreen (missing triangle due to mesh vertex order) ; mesh dependent", Float) = 0
     }
     SubShader {
         Tags {
@@ -50,10 +51,17 @@ Shader "Lereldarion/Overlay/Grid" {
                 float4 position : SV_POSITION; // CS as rasterizer input, screenspace as fragment input
                 UNITY_VERTEX_OUTPUT_STEREO
             };
-
+            
+            uniform float _Grid_Size_Meters;
+            uniform float _Grid_Line_Width_01;
             uniform float _Overlay_Fullscreen;
+            uniform float _Overlay_Screenspace_Vertex_Reorder;
+
             uniform float _VRChatMirrorMode;
             uniform float _VRChatCameraMode;
+
+            UNITY_DECLARE_DEPTH_TEXTURE(_CameraDepthTexture);
+            float4 _CameraDepthTexture_TexelSize;
 
             static const float nan = asfloat(uint(-1)); // 0xFFF...FFF should be a quiet NaN
             
@@ -61,10 +69,10 @@ Shader "Lereldarion/Overlay/Grid" {
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
                 if(_Overlay_Fullscreen == 1 && _VRChatMirrorMode == 0 && _VRChatCameraMode == 0) {
-                    // Fullscreen mode : cover the screen with an oversized triangle
+                    // Fullscreen mode : cover the screen with a quad by redirecting existing vertices
                     if(vertex_id < 4) {
-                        // For some reason we seem to need the 4th vertex on some meshes even if the second triangle is entirely outside clip space. NaN effects ?
-                        float2 ndc = vertex_id & uint2(2, 1) ? 3.1 : -1; // [float2(-1, -1), float2(-1, 3.1), float2(3.1, -1)] to cover clip space [-1,1]^2
+                        float2 ndc = vertex_id & uint2(2, 1) ? 1 : -1; // [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+                        if(_Overlay_Screenspace_Vertex_Reorder && (vertex_id & 1)) { ndc.x *= -1; }
                         output.position = float4(ndc, UNITY_NEAR_CLIP_VALUE, 1);
                     } else {
                         output.position = nan.xxxx; // Vertex discard
@@ -73,9 +81,6 @@ Shader "Lereldarion/Overlay/Grid" {
                     output.position = UnityObjectToClipPos(input.position_os);
                 }
             }
-
-            UNITY_DECLARE_DEPTH_TEXTURE(_CameraDepthTexture);
-            float4 _CameraDepthTexture_TexelSize;
 
             // unity_MatrixInvP is not provided in BIRP. unity_CameraInvProjection is only the basic camera projection (no VR components).
             // Using d4rkpl4y3r technique of patching unity_CameraInvProjection (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
@@ -140,9 +145,6 @@ Shader "Lereldarion/Overlay/Grid" {
                 pattern = lerp(pattern, line_width, saturate(duv * 2.0 - 1.0)); // fade before moire patterns
                 return pattern;
             }
-            
-            uniform float _Grid_Size_Meters;
-            uniform float _Grid_Line_Width_01;
 
             fixed4 fragment_stage (FragmentInput input) : SV_Target {
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);

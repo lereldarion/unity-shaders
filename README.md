@@ -17,6 +17,10 @@ If you use this toggle, **animate it only locally** using the `IsLocal` VRChat p
 Note that this fullscreen effect only works if the mesh renderer is not culled by Unity, so ensure that the mesh bounds are in view of the player camera.
 On avatars, this toggle ignores the mirror instances and only works on the player camera to not be annoying.
 
+Since v1.4.0 this fullscreen mode uses the vertex stage only (no geometry pass).
+This fails on some meshes due to mesh vertex ordering. Symptoms are a missing triangle on the screen.
+A toggle can be used to reorder vertices, hopefully providing an option for all meshes.
+
 The `Demo` scene demonstrate their use on a dummy scene.
 
 ### Gamma Adjust
