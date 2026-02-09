@@ -7,8 +7,8 @@ Shader "Lereldarion/Overlay/HUD" {
     Properties {
         [Header(HUD)]
         [HDR] _Color("Emissive color", Color) = (0, 1, 0, 1)
-        _UI_Position_Radius("Radius from center to UI elements (compass, data block)", Range(0.1, 1)) = 0.3
-        _Font_Size("Font size", Range(0.01, 0.05)) = 0.03
+        _UI_Position_Radius("Radius from center to UI elements (compass, data block)", Range(0.1, 0.7)) = 0.2
+        _Font_Size("Font size", Range(0.01, 0.05)) = 0.023
         [HideInInspector] _MSDF_Glyph_Atlas ("MSDF glyph texture", 2D) = "" {}
 
         [Header(Overlay)]

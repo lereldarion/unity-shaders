@@ -29,10 +29,10 @@ Material:
         m_Offset: {x: 0, y: 0}
     m_Ints: []
     m_Floats:
-    - _Font_Size: 0.03
+    - _Font_Size: 0.023
     - _Overlay_Fullscreen: 0
     - _Overlay_Screenspace_Vertex_Reorder: 0
-    - _UI_Position_Radius: 0.3
+    - _UI_Position_Radius: 0.2
     m_Colors:
     - _Color: {r: 0, g: 1, b: 0, a: 1}
   m_BuildTextureStacks: []
