@@ -7,7 +7,6 @@ Shader "Lereldarion/Overlay/HUD" {
     Properties {
         [Header(HUD)]
         [HDR] _Color("Emissive color", Color) = (0, 1, 0, 1)
-        _Zoom("Zoom", Float) = 1
         [HideInInspector] _MSDF_Glyph_Atlas ("MSDF glyph texture", 2D) = "" {}
 
         [Header(Overlay)]
@@ -40,7 +39,6 @@ Shader "Lereldarion/Overlay/HUD" {
             #include "UnityCG.cginc"
 
             uniform fixed4 _Color;
-            uniform float _Zoom;
             uniform float _Overlay_Fullscreen;
             uniform float _Overlay_Screenspace_Vertex_Reorder;
 
@@ -227,24 +225,21 @@ Shader "Lereldarion/Overlay/HUD" {
                 nointerpolation float azimuth_radiants : AZIMUTH;
                 nointerpolation float elevation_radiants : ELEVATION;
 
-                static HudData compute(float3 normal_ws, bool normal_is_forward) {
+                static HudData compute(float3 forward_normal_ws) {
                     HudData hd;
 
-                    const float3 forward_normal_ws = normal_is_forward ? normal_ws : -normal_ws;
-
                     // Axis of polar-like coordinate, aligned to world up
-                    const float polar_scale = 1. / _Zoom; // Scale here instead of fragment
                     const float3 up_direction_ws = float3(0, 1, 0);
                     const float3 horizontal_tangent = normalize(cross(forward_normal_ws, up_direction_ws));
-                    hd.polar_x_ws = polar_scale * horizontal_tangent * -1 /* needed but not sure why ; ht should go to the right */;
-                    hd.polar_y_ws = polar_scale * cross(horizontal_tangent, forward_normal_ws);
+                    hd.polar_x_ws = horizontal_tangent * -1 /* needed but not sure why ; ht should go to the right */;
+                    hd.polar_y_ws = cross(horizontal_tangent, forward_normal_ws);
 
                     // World azimuth and elevation of the surface forward normal
                     const float3 east_ws = float3(1, 0, 0);
                     const float3 north_ws = float3(0, 0, 1);
                     const float angular_dist_to_north_0_pi = acos(dot(horizontal_tangent, east_ws));
                     hd.azimuth_radiants = pi - angular_dist_to_north_0_pi * sign(dot(horizontal_tangent, north_ws)); // 0 at north, pi/2 east, pi south, 3pi/2 west
-                    const float angular_dist_to_up_0_pi = acos(dot(normal_ws, up_direction_ws));
+                    const float angular_dist_to_up_0_pi = acos(dot(forward_normal_ws, up_direction_ws));
                     hd.elevation_radiants = pi/2 - angular_dist_to_up_0_pi; // -pi/2 when looking at the bottom, pi/2 at the top
 
                     // Compute depth from the depth texture.
@@ -341,7 +336,7 @@ Shader "Lereldarion/Overlay/HUD" {
             void vertex_stage (VertexInput input, uint vertex_id : SV_VertexID, out FragmentInput output) {
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
-                float3 normal_ws = 0;
+                float3 forward_normal_ws;
                 bool compute_hud_data = true;
 
                 if(_Overlay_Fullscreen == 1 && _VRChatMirrorMode == 0 && _VRChatCameraMode == 0) {
@@ -352,23 +347,25 @@ Shader "Lereldarion/Overlay/HUD" {
                         output.position = float4(ndc, UNITY_NEAR_CLIP_VALUE, 1);
 
                         const float3 forward_vs = float3(0, 0, -1);
-                        const float4 position_vs_w = ClipToViewPos(output.position);
-                        output.ray_ws = mul(unity_MatrixInvV, position_vs_w.xyz / position_vs_w.w); 
-                        normal_ws = mul(unity_MatrixInvV, forward_vs);
+                        const float4 position_vs = ClipToViewPos(output.position);
+                        output.ray_ws = mul(unity_MatrixInvV, position_vs.xyz / position_vs.w);
+                        forward_normal_ws = normalize(mul(unity_MatrixInvV, forward_vs));
                     } else {
                         output.position = nan.xxxx; // Vertex discard
                         output.ray_ws = 0;
+                        forward_normal_ws = 0;
                         compute_hud_data = false;
                     }
                 } else {
                     const float3 position_ws = mul(unity_ObjectToWorld, float4(input.position_os.xyz, 1)).xyz;
                     output.position = UnityWorldToClipPos(position_ws);
                     output.ray_ws = position_ws - _WorldSpaceCameraPos;
-                    normal_ws = UnityObjectToWorldNormal(input.normal_os);
+                    const float3 normal_ws = UnityObjectToWorldNormal(input.normal_os);
+                    forward_normal_ws = dot(normal_ws, output.ray_ws) >= 0 ? normal_ws : -normal_ws;
                 }
 
                 if(compute_hud_data) {
-                    output.hud_data = HudData::compute(normal_ws, dot(normal_ws, output.ray_ws) >= 0);
+                    output.hud_data = HudData::compute(forward_normal_ws);
                 } else {
                     output.hud_data = (HudData) 0;
                 }
@@ -396,7 +393,7 @@ Shader "Lereldarion/Overlay/HUD" {
                 // Restrict to bounds, but allow gap for AA
                 const float vertical_bounds = sdf_interval_1d_centered(p.y, 0, 11 * one_deg_rad);
                 if(vertical_bounds < polar_screen_scale) {
-                    // "polar uv" are sin angle from normal ~ angle for center, in radiants
+                    // polar angle from normal, in radiants
                     p.y += elevation_at_0;
     
                     // Positionning
@@ -424,7 +421,7 @@ Shader "Lereldarion/Overlay/HUD" {
 
                 const float horizontal_bounds = sdf_interval_1d_centered(p.x, 0, 20 * one_deg_rad);
                 if( horizontal_bounds < polar_screen_scale) {
-                    // "polar uv" are sin angle from normal ~ angle for center, in radiants
+                    // polar angle from normal, in radiants
                     p.x += azimuth_at_0;
                     
                     // Positionning
@@ -450,12 +447,12 @@ Shader "Lereldarion/Overlay/HUD" {
 
             fixed4 fragment_stage (FragmentInput input) : SV_Target {
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
-
-                // polar_{x/y} are vectors in a plane facing the view.
-                // We want a measure of angle to view dir ~ sin angle to view dir = cos angle to these plane vectors.
-                // This create a set of polar "uvs" (non linear)
+                
+                // We want polar (angle) coordinates with x/y aligned with normal and world up.
+                // We want a measure of angle to view dir, with sin angle to view dir = cos angle to these plane vectors.
+                // This is not linear, but linear enough around the normal, and with a pleasing round deformation.
                 const float3 ray_ws = normalize(input.ray_ws);
-                const float2 polar = float2(dot(ray_ws, input.hud_data.polar_x_ws), dot(ray_ws, input.hud_data.polar_y_ws));
+                const float2 polar = asin(float2(dot(ray_ws, input.hud_data.polar_x_ws), dot(ray_ws, input.hud_data.polar_y_ws)));
 
                 const float polar_screen_scale = compute_screenspace_scale_of_uv(polar);
 

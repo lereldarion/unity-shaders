@@ -1,5 +1,8 @@
 # Changelog
 
+## [Unreleased]
+- HUD : improve UI. Use asin to reduce compass angle errors.
+
 ## 1.4.1 - 08/02/2026
 - Grid : remove broken grid for infnite distance (skybox)
 - HUD: Depth texture absence detection not possible, remove failed attempt
