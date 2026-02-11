@@ -15,8 +15,9 @@ Shader "Lereldarion/Overlay/Grid" {
         _Grid_Line_Width_01("Line width (% of interval)", Range(0, 1)) = 0.02
 
         [Header(Overlay)]
-        [ToggleUI] _Overlay_Fullscreen("Force Screenspace Fullscreen", Float) = 0
-        [ToggleUI] _Overlay_Screenspace_Vertex_Reorder("Fix broken fullscreen (missing triangle due to mesh vertex order) ; mesh dependent", Float) = 0
+        [KeywordEnum(Mesh, Fullscreen)] _Overlay_Mode("Overlay mode", Float) = 0
+        [IntRange] _Overlay_Fullscreen_Vertex_Order("Fullscreen vertex order (mesh dependent)", Range(0, 2)) = 0
+        [ToggleUI] _Overlay_Fullscreen_Only_Main_Camera("Fullscreen mode restricted to main camera", Float) = 1
     }
     SubShader {
         Tags {
@@ -37,9 +38,11 @@ Shader "Lereldarion/Overlay/Grid" {
             #pragma warning (error : 3206) // implicit truncation
 
             #pragma target 5.0
+            #pragma multi_compile_instancing
+            #pragma multi_compile _OVERLAY_MODE_MESH _OVERLAY_MODE_FULLSCREEN
+
             #pragma vertex vertex_stage
             #pragma fragment fragment_stage
-            #pragma multi_compile_instancing
             
             #include "UnityCG.cginc"
 
@@ -48,14 +51,16 @@ Shader "Lereldarion/Overlay/Grid" {
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
             struct FragmentInput {
-                float4 position : SV_POSITION; // CS as rasterizer input, screenspace as fragment input
+                float4 position : SV_POSITION;
                 UNITY_VERTEX_OUTPUT_STEREO
             };
             
             uniform float _Grid_Size_Meters;
             uniform float _Grid_Line_Width_01;
-            uniform float _Overlay_Fullscreen;
-            uniform float _Overlay_Screenspace_Vertex_Reorder;
+
+            uniform float _Overlay_Mode;
+            uniform uint _Overlay_Fullscreen_Vertex_Order;
+            uniform float _Overlay_Fullscreen_Only_Main_Camera;
 
             uniform float _VRChatMirrorMode;
             uniform float _VRChatCameraMode;
@@ -68,12 +73,19 @@ Shader "Lereldarion/Overlay/Grid" {
             void vertex_stage (VertexInput input, uint vertex_id : SV_VertexID, out FragmentInput output) {
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
-                if(_Overlay_Fullscreen == 1 && _VRChatMirrorMode == 0 && _VRChatCameraMode == 0) {
+
+                #if defined(_OVERLAY_MODE_MESH)
+                const bool fullscreen = false;
+                #elif defined(_OVERLAY_MODE_FULLSCREEN)
+                const bool fullscreen = _VRChatMirrorMode == 0 && _VRChatCameraMode * _Overlay_Fullscreen_Only_Main_Camera == 0;
+                #endif
+
+                if(fullscreen) {
                     // Fullscreen mode : cover the screen with a quad by redirecting existing vertices
                     if(vertex_id < 4) {
-                        float2 ndc = vertex_id & uint2(2, 1) ? 1 : -1; // [(-1, -1), (-1, 1), (1, -1), (1, 1)]
-                        if(_Overlay_Screenspace_Vertex_Reorder && (vertex_id & 1)) { ndc.x *= -1; }
-                        output.position = float4(ndc, UNITY_NEAR_CLIP_VALUE, 1);
+                        const float2 ndc = vertex_id & uint2(2, 1) ? 1 : -1; // [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+                        const float2 swap = _Overlay_Fullscreen_Vertex_Order & (vertex_id & uint2(1, 2)) ? -1 : 1;
+                        output.position = float4(ndc * swap, UNITY_NEAR_CLIP_VALUE, 1);
                     } else {
                         output.position = nan.xxxx; // Vertex discard
                     }

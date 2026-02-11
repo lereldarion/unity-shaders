@@ -2,7 +2,6 @@
 // Free to redistribute under the MIT license
 
 // Overlay at optical infinity (reflecting sight), with crosshair, rangefinder distance, and worldspace compass.
-// Attached to a flat surface with uniform UVs (like a quad), it will orient itself with the tangent space.
 Shader "Lereldarion/Overlay/HUD" {
     Properties {
         [Header(HUD)]
@@ -12,8 +11,9 @@ Shader "Lereldarion/Overlay/HUD" {
         [HideInInspector] _MSDF_Glyph_Atlas ("MSDF glyph texture", 2D) = "" {}
 
         [Header(Overlay)]
-        [ToggleUI] _Overlay_Fullscreen("Force Screenspace Fullscreen", Float) = 0
-        [ToggleUI] _Overlay_Screenspace_Vertex_Reorder("Fix broken fullscreen (missing triangle due to mesh vertex order) ; mesh dependent", Float) = 0
+        [KeywordEnum(Mesh, Fullscreen)] _Overlay_Mode("Overlay mode", Float) = 0
+        [IntRange] _Overlay_Fullscreen_Vertex_Order("Fullscreen vertex order (mesh dependent)", Range(0, 2)) = 0
+        [ToggleUI] _Overlay_Fullscreen_Only_Main_Camera("Fullscreen mode restricted to main camera", Float) = 1
     }
     SubShader {
         Tags {
@@ -34,17 +34,21 @@ Shader "Lereldarion/Overlay/HUD" {
             #pragma warning (error : 3206) // implicit truncation
 
             #pragma target 5.0
+            #pragma multi_compile_instancing
+            #pragma multi_compile _OVERLAY_MODE_MESH _OVERLAY_MODE_FULLSCREEN
+
             #pragma vertex vertex_stage
             #pragma fragment fragment_stage
-            #pragma multi_compile_instancing
             
             #include "UnityCG.cginc"
 
             uniform fixed4 _Color;
             uniform float _UI_Position_Radius;
             uniform float _Font_Size;
-            uniform float _Overlay_Fullscreen;
-            uniform float _Overlay_Screenspace_Vertex_Reorder;
+
+            uniform float _Overlay_Mode;
+            uniform uint _Overlay_Fullscreen_Vertex_Order;
+            uniform float _Overlay_Fullscreen_Only_Main_Camera;
 
             uniform SamplerState sampler_clamp_bilinear;
             uniform Texture2D<float3> _MSDF_Glyph_Atlas;
@@ -63,10 +67,9 @@ Shader "Lereldarion/Overlay/HUD" {
             float2 pow2(float2 v) { return v * v; }
             float round_to_scale(float v, float scale) { return scale * round(v / scale); }
             float glsl_mod(float x, float y) { return x - y * floor(x / y); }
+            static const float nan = asfloat(uint(-1)); // 0xFFF...FFF should be a quiet NaN
             static const float pi = UNITY_PI;
             static const float one_deg_rad = pi / 180;
-            static const float nan = asfloat(uint(-1)); // 0xFFF...FFF should be a quiet NaN
-            static const float f32_infinity = asfloat(0x7f800000);
 
             // Replacement for missing invP by d4rkpl4y3r (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
             float4 ClipToViewPos(float4 clipPos) {
@@ -106,7 +109,6 @@ Shader "Lereldarion/Overlay/HUD" {
                 float2 closest_segment_point = float2(clamp(p.x, from, to), 0);
                 return distance(p, closest_segment_point);
             }
-            float sdf_interval_1d_centered(float x, float center, float radius) { return abs(x - center) - radius; }
 
             ////////////////////////////////////////////////////////////////////////////////////
             // MSDF monospace glyph rendering.
@@ -322,27 +324,32 @@ Shader "Lereldarion/Overlay/HUD" {
                 float3 normal_os : NORMAL;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
-
             struct FragmentInput {
                 float4 position : SV_POSITION;
                 float3 ray_ws : RAY_WS;
                 HudData hud_data;
-
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
             void vertex_stage (VertexInput input, uint vertex_id : SV_VertexID, out FragmentInput output) {
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
+
+                #if defined(_OVERLAY_MODE_MESH)
+                const bool fullscreen = false;
+                #elif defined(_OVERLAY_MODE_FULLSCREEN)
+                const bool fullscreen = _VRChatMirrorMode == 0 && _VRChatCameraMode * _Overlay_Fullscreen_Only_Main_Camera == 0;
+                #endif
+
                 float3 forward_normal_ws;
                 bool compute_hud_data = true;
 
-                if(_Overlay_Fullscreen == 1 && _VRChatMirrorMode == 0 && _VRChatCameraMode == 0) {
+                if(fullscreen) {
                     // Fullscreen mode : cover the screen with a quad by redirecting existing vertices
                     if(vertex_id < 4) {
-                        float2 ndc = vertex_id & uint2(2, 1) ? 1 : -1; // [(-1, -1), (-1, 1), (1, -1), (1, 1)]
-                        if(_Overlay_Screenspace_Vertex_Reorder && (vertex_id & 1)) { ndc.x *= -1; }
-                        output.position = float4(ndc, UNITY_NEAR_CLIP_VALUE, 1);
+                        const float2 ndc = vertex_id & uint2(2, 1) ? 1 : -1; // [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+                        const float2 swap = _Overlay_Fullscreen_Vertex_Order & (vertex_id & uint2(1, 2)) ? -1 : 1;
+                        output.position = float4(ndc * swap, UNITY_NEAR_CLIP_VALUE, 1);
 
                         const float3 forward_vs = float3(0, 0, -1);
                         const float4 position_vs = ClipToViewPos(output.position);

@@ -12,14 +12,17 @@ Install :
 ## Overlays
 These overlay shaders are useful on avatars for world analysis (wireframe, normals, grid, HUD), or adjusting lighting (GammaAdjust).
 
-They all support an `_Overlay_Fullscreen` toggle to make them take the entire field of view of the camera ; useful for first person view without clipping problems.
-If you use this toggle, **animate it only locally** using the `IsLocal` VRChat parameter, to avoid annoying other users.
-Note that this fullscreen effect only works if the mesh renderer is not culled by Unity, so ensure that the mesh bounds are in view of the player camera.
-On avatars, this toggle ignores the mirror instances and only works on the player camera to not be annoying.
+All overlays have multiple modes, selected by `_Overlay_Mode` property :
+- `Mesh` : applied on the mesh
+- `Fullscreen` : applied as a screenspace shader (fullscreen).
 
-Since v1.4.0 this fullscreen mode uses the vertex stage only (no geometry pass).
-This fails on some meshes due to mesh vertex ordering. Symptoms are a missing triangle on the screen.
-A toggle can be used to reorder vertices, hopefully providing an option for all meshes.
+If you use a fullscreen mode, it is good practice to only animate the mode to fullscreen **locally** (`IsLocal` VRChat parameter) to avoid annoying others.
+Fullscreen mode uses [VRChat shader globals](https://creators.vrchat.com/worlds/udon/vrc-graphics/vrchat-shader-globals/) to ignore mirror (always) and secondary cameras (toggle).
+Note that this fullscreen effect only works if the mesh renderer is not culled by Unity, so ensure that the mesh bounds are in view of the player camera.
+
+Since v1.4.0 the fullscreen mode uses the vertex stage only (no geometry pass).
+This will fail depending on the mesh vertex ordering ; symptoms are a missing triangle on the screen.
+To fix it change the `vertex order` slider until it displays correctly.
 
 The `Demo` scene demonstrate their use on a dummy scene.
 

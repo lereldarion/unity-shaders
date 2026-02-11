@@ -11,7 +11,8 @@ Material:
   m_Shader: {fileID: 4800000, guid: 8eb18ad23695f9542b540ca46c00268b, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
-  m_ValidKeywords: []
+  m_ValidKeywords:
+  - _OVERLAY_MODE_MESH
   m_InvalidKeywords: []
   m_LightmapFlags: 4
   m_EnableInstancingVariants: 1
@@ -26,8 +27,9 @@ Material:
     m_Ints: []
     m_Floats:
     - _Gamma_Adjust_Value: 0
-    - _Overlay_Fullscreen: 0
-    - _Overlay_Screenspace_Vertex_Reorder: 0
+    - _Overlay_Fullscreen_Only_Main_Camera: 1
+    - _Overlay_Fullscreen_Vertex_Order: 0
+    - _Overlay_Mode: 0
     - _Transmit_Emission: 1
     m_Colors: []
   m_BuildTextureStacks: []
