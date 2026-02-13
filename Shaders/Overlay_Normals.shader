@@ -19,6 +19,7 @@ Shader "Lereldarion/Overlay/Normals" {
             "RenderType" = "Overlay"
             "VRCFallback" = "Hidden"
             "PreviewType" = "Plane"
+            "DisableBatching" = "True" // For Billboard sphere mode only
         }
         
         Cull Off
@@ -50,6 +51,7 @@ Shader "Lereldarion/Overlay/Normals" {
             };
             struct FragmentInput {
                 sample float4 position : SV_POSITION; // Explicit interpolation modifier required here
+                UNITY_VERTEX_INPUT_INSTANCE_ID
                 UNITY_VERTEX_OUTPUT_STEREO
 
                 #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
@@ -145,13 +147,14 @@ Shader "Lereldarion/Overlay/Normals" {
                 const float b = dot(oc, rd);
                 const float c = dot(oc, oc) - sph.w * sph.w;
                 float h = b * b - c;
-                if(h < 0.0) return -1.0;
+                if(h < 0.0) { return float2(-1.0, -1.0); }
                 h = sqrt(h);
                 return float2(-b - h, -b + h);
             }
             
             void vertex_stage (VertexInput input, uint vertex_id : SV_VertexID, out FragmentInput output) {
                 UNITY_SETUP_INSTANCE_ID(input);
+                UNITY_TRANSFER_INSTANCE_ID(input, output);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
 
                 #if defined(_OVERLAY_MODE_MESH)
@@ -208,6 +211,7 @@ Shader "Lereldarion/Overlay/Normals" {
             }
 
             void fragment_stage (FragmentInput input, out FragmentOutput output) {
+                UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
 
                 #ifdef _OVERLAY_MODE_BILLBOARD_SPHERE
@@ -215,6 +219,7 @@ Shader "Lereldarion/Overlay/Normals" {
                 const float3 ray_os = normalize(input.ray_os);
                 const float2 ray_hits = sphere_intersect(camera_pos_os, ray_os, float4(0, 0, 0, input.sphere_radius_os));
                 if(ray_hits.y < 0) {
+                    output.depth = 0;
                     discard; // Outside and no intersect
                 } else if(ray_hits.x < 0) {
                     output.depth = UNITY_NEAR_CLIP_VALUE; // Inside sphere -> Fullscreen

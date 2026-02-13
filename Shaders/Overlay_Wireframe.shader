@@ -45,6 +45,7 @@ Shader "Lereldarion/Overlay/Wireframe" {
             };
             struct FragmentInput {
                 float4 position : SV_POSITION;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
@@ -62,6 +63,7 @@ Shader "Lereldarion/Overlay/Wireframe" {
             
             void vertex_stage (VertexInput input, uint vertex_id : SV_VertexID, out FragmentInput output) {
                 UNITY_SETUP_INSTANCE_ID(input);
+                UNITY_TRANSFER_INSTANCE_ID(input, output);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
 
                 #if defined(_OVERLAY_MODE_MESH)
@@ -136,6 +138,7 @@ Shader "Lereldarion/Overlay/Wireframe" {
             };
 
             fixed4 fragment_stage (FragmentInput input) : SV_Target {
+                UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
 
                 DepthReconstruction dr = DepthReconstruction::init(input.position);
