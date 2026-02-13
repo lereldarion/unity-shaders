@@ -54,7 +54,7 @@ Shader "Lereldarion/Overlay/Normals" {
 
                 #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
                 float3 ray_os : RAY_OS;
-                float sphere_radius : SPHERE_RADIUS;
+                float sphere_radius_os : SPHERE_RADIUS_OS;
                 #endif
             };
             struct FragmentOutput {
@@ -84,55 +84,6 @@ Shader "Lereldarion/Overlay/Normals" {
             float length_sq(float3 v) { return dot(v, v); }
             float length_sq(float2 v) { return dot(v, v); }
             static const float nan = asfloat(uint(-1)); // 0xFFF...FFF should be a quiet NaN
-            
-            void vertex_stage (VertexInput input, uint vertex_id : SV_VertexID, out FragmentInput output) {
-                UNITY_SETUP_INSTANCE_ID(input);
-                UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
-
-                #if defined(_OVERLAY_MODE_MESH)
-                const bool fullscreen = false;
-                #elif defined(_OVERLAY_MODE_FULLSCREEN)
-                const bool fullscreen = _VRChatMirrorMode == 0 && _VRChatCameraMode * _Overlay_Fullscreen_Only_Main_Camera == 0;
-                #elif defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
-                const float2 disk_uv = 2 * input.uv0 - 1;
-                const float3 plane_pos_os = input.position_os - dot(input.position_os, input.normal_os) * input.normal_os; // Assume normal_os is normalized
-                const float sphere_radius_os_squared = length_sq(plane_pos_os) / max(length_sq(disk_uv), 1e-6);
-                output.sphere_radius = sqrt(sphere_radius_os_squared);
-                
-                const float3 camera_pos_os = mul(unity_WorldToObject, float4(_WorldSpaceCameraPos, 1)).xyz;
-                const float camera_distance_sq = length_sq(camera_pos_os);
-                const bool fullscreen = camera_distance_sq <= sphere_radius_os_squared; // TODO fix transition to fullscreen. use near plane properly
-                if(fullscreen) {
-                    output.ray_os = 0;
-                } else {
-                    const float camera_distance = sqrt(camera_distance_sq);
-
-                    const float3 world_up_os = mul(unity_WorldToObject, float3(0, 1, 0));
-                    const float3 billboard_normal_os = camera_pos_os / camera_distance;
-                    const float3 billboard_x_os = normalize(cross(world_up_os, billboard_normal_os));
-                    const float3 billboard_y_os = cross(billboard_normal_os, billboard_x_os);
-                    const float3x3 billboard = float3x3(billboard_x_os, billboard_y_os, billboard_normal_os);
-                    
-                    //const bool is_orthographic = UNITY_MATRIX_P._m33 == 1.0; // TODO ortho support : no effective radius, and fix camera vector
-                    const float apparent_radius = output.sphere_radius * sqrt(max(camera_distance - output.sphere_radius, 0) / (camera_distance + output.sphere_radius));
-                    input.position_os = mul(float3(disk_uv * apparent_radius, output.sphere_radius), billboard);
-                    output.ray_os = input.position_os - camera_pos_os;
-                }
-                #endif
-
-                if(fullscreen) {
-                    // Fullscreen mode : cover the screen with a quad by redirecting existing vertices
-                    if(vertex_id < 4) {
-                        const float2 ndc = vertex_id & uint2(2, 1) ? 1 : -1; // [(-1, -1), (-1, 1), (1, -1), (1, 1)]
-                        const float2 swap = _Overlay_Fullscreen_Vertex_Order & (vertex_id & uint2(1, 2)) ? -1 : 1;
-                        output.position = float4(ndc * swap, UNITY_NEAR_CLIP_VALUE, 1);
-                    } else {
-                        output.position = nan.xxxx; // Vertex discard
-                    }
-                } else {
-                    output.position = UnityObjectToClipPos(input.position_os);
-                }
-            }
 
             // unity_MatrixInvP is not provided in BIRP. unity_CameraInvProjection is only the basic camera projection (no VR components).
             // Using d4rkpl4y3r technique of patching unity_CameraInvProjection (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
@@ -140,10 +91,7 @@ Shader "Lereldarion/Overlay/Normals" {
                 float2 pixel_position;
                 float4x4 cs_to_vs;
 
-                static DepthReconstruction init(float4 fragment_sv_position) {
-                    DepthReconstruction o;
-                    o.pixel_position = fragment_sv_position.xy;
-
+                static float4x4 make_cs_to_vs() {
                     float4x4 flipZ = float4x4(1, 0, 0, 0,
                                             0, 1, 0, 0,
                                             0, 0, -1, 1,
@@ -157,12 +105,18 @@ Shader "Lereldarion/Overlay/Normals" {
                                             0, _ProjectionParams.x, 0, 0,
                                             0, 0, 1, 0,
                                             0, 0, 0, 1);
-                    o.cs_to_vs = mul(scaleZ, flipZ);
-                    o.cs_to_vs = mul(invP, o.cs_to_vs);
-                    o.cs_to_vs = mul(flipY, o.cs_to_vs);
-                    o.cs_to_vs._24 *= _ProjectionParams.x;
-                    o.cs_to_vs._42 *= -1;
+                    float4x4 m = mul(scaleZ, flipZ);
+                    m = mul(invP, m);
+                    m = mul(flipY, m);
+                    m._24 *= _ProjectionParams.x;
+                    m._42 *= -1;
+                    return m;
+                }
 
+                static DepthReconstruction init(float4 fragment_sv_position) {
+                    DepthReconstruction o;
+                    o.pixel_position = fragment_sv_position.xy;
+                    o.cs_to_vs = make_cs_to_vs();
                     return o;
                 }
 
@@ -185,30 +139,89 @@ Shader "Lereldarion/Overlay/Normals" {
                 }
             };
 
-            // https://iquilezles.org/articles/spherefunctions/
-            float sphere_intersect(float3 ro, float3 rd, float4 sph) {
+            // https://iquilezles.org/articles/intersectors/
+            float2 sphere_intersect(float3 ro, float3 rd, float4 sph) {
                 const float3 oc = ro - sph.xyz;
                 const float b = dot(oc, rd);
                 const float c = dot(oc, oc) - sph.w * sph.w;
-                const float h = b * b - c;
+                float h = b * b - c;
                 if(h < 0.0) return -1.0;
-                return -b - sqrt(h);
+                h = sqrt(h);
+                return float2(-b - h, -b + h);
+            }
+            
+            void vertex_stage (VertexInput input, uint vertex_id : SV_VertexID, out FragmentInput output) {
+                UNITY_SETUP_INSTANCE_ID(input);
+                UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
+
+                #if defined(_OVERLAY_MODE_MESH)
+                const bool fullscreen = false;
+                #elif defined(_OVERLAY_MODE_FULLSCREEN)
+                const bool fullscreen = _VRChatMirrorMode == 0 && _VRChatCameraMode * _Overlay_Fullscreen_Only_Main_Camera == 0;
+                #elif defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
+                const float2 disk_uv = 2 * input.uv0 - 1;
+                const float3 plane_pos_os = input.position_os - dot(input.position_os, input.normal_os) * input.normal_os; // Assume normal_os is normalized
+                const float sphere_radius_sq_os = length_sq(plane_pos_os) / max(length_sq(disk_uv), 1e-6);
+                output.sphere_radius_os = sqrt(sphere_radius_sq_os);
+                output.ray_os = 0;
+                
+                // Swap to screenspace fullscreen if within sphere, or so close to the sphere that near plane clips the surface.
+                // Computing the frustum at near plane is complex. Approximate with a sphere of radius=2*near around the camera.
+                const float3 camera_to_center_ws = mul(unity_ObjectToWorld, float4(0, 0, 0, 1)).xyz - _WorldSpaceCameraPos;
+                const float3 biased_camera_pos_ws = _WorldSpaceCameraPos + (2 * _ProjectionParams.y) * normalize(camera_to_center_ws);
+                const bool fullscreen = length_sq(mul(unity_WorldToObject, float4(biased_camera_pos_ws, 1)).xyz) <= sphere_radius_sq_os; 
+                #endif
+
+                if(fullscreen) {
+                    // Fullscreen mode : cover the screen with a quad by redirecting existing vertices
+                    if(vertex_id < 4) {
+                        const float2 ndc = vertex_id & uint2(2, 1) ? 1 : -1; // [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+                        const float2 swap = _Overlay_Fullscreen_Vertex_Order & (vertex_id & uint2(1, 2)) ? -1 : 1;
+                        output.position = float4(ndc * swap, UNITY_NEAR_CLIP_VALUE, 1);
+
+                        #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
+                        const float4 v = mul(DepthReconstruction::make_cs_to_vs(), output.position);
+                        output.ray_os = mul(unity_WorldToObject, mul(unity_MatrixInvV, v.xyz / v.w));
+                        #endif
+                    } else {
+                        output.position = nan.xxxx; // Vertex discard
+                    }
+                } else {
+                    #ifdef _OVERLAY_MODE_BILLBOARD_SPHERE
+                    const float3 camera_pos_os = mul(unity_WorldToObject, float4(_WorldSpaceCameraPos, 1)).xyz;
+                    const float camera_distance_os = length(camera_pos_os);
+    
+                    const float3 world_up_os = mul(unity_WorldToObject, float3(0, 1, 0));
+                    const float3 billboard_normal_os = camera_pos_os / camera_distance_os;
+                    const float3 billboard_x_os = normalize(cross(world_up_os, billboard_normal_os));
+                    const float3 billboard_y_os = cross(billboard_normal_os, billboard_x_os);
+                    const float3x3 billboard = float3x3(billboard_x_os, billboard_y_os, billboard_normal_os);
+                    
+                    //const bool is_orthographic = UNITY_MATRIX_P._m33 == 1.0; // TODO ortho support : no effective radius, and fix camera vector
+                    const float apparent_radius = output.sphere_radius_os * sqrt(max(camera_distance_os - output.sphere_radius_os, 0) / (camera_distance_os + output.sphere_radius_os));
+                    input.position_os = mul(float3(disk_uv * apparent_radius, output.sphere_radius_os), billboard);
+                    output.ray_os = input.position_os - camera_pos_os;
+                    #endif
+
+                    output.position = UnityObjectToClipPos(input.position_os);
+                }
             }
 
             void fragment_stage (FragmentInput input, out FragmentOutput output) {
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
 
-                #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
+                #ifdef _OVERLAY_MODE_BILLBOARD_SPHERE
                 const float3 camera_pos_os = mul(unity_WorldToObject, float4(_WorldSpaceCameraPos, 1)).xyz;
-                if(length_sq(camera_pos_os) <= input.sphere_radius * input.sphere_radius) {
-                    // Fullscreen
-                    output.depth = UNITY_NEAR_CLIP_VALUE;
+                const float3 ray_os = normalize(input.ray_os);
+                const float2 ray_hits = sphere_intersect(camera_pos_os, ray_os, float4(0, 0, 0, input.sphere_radius_os));
+                if(ray_hits.y < 0) {
+                    discard; // Outside and no intersect
+                } else if(ray_hits.x < 0) {
+                    output.depth = UNITY_NEAR_CLIP_VALUE; // Inside sphere -> Fullscreen
                 } else {
+                    // Outside sphere, compute proper depth
                     // TODO waves on border ?
-                    const float3 ray_os = normalize(input.ray_os);
-                    const float ray_hit = sphere_intersect(camera_pos_os, ray_os, float4(0, 0, 0, input.sphere_radius));
-                    if(ray_hit < 0) { discard; }
-                    const float4 sphere = UnityObjectToClipPos(camera_pos_os + ray_hit * ray_os);
+                    const float4 sphere = UnityObjectToClipPos(camera_pos_os + ray_hits.x * ray_os);
                     output.depth = sphere.z / sphere.w;
                 }
                 #endif
