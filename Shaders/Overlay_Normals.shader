@@ -19,6 +19,7 @@ Shader "Lereldarion/Overlay/Normals" {
             "RenderType" = "Overlay"
             "VRCFallback" = "Hidden"
             "PreviewType" = "Plane"
+            "IgnoreProjector" = "True"
             "DisableBatching" = "True" // For Billboard sphere mode only
         }
         
@@ -219,8 +220,7 @@ Shader "Lereldarion/Overlay/Normals" {
                 const float3 ray_os = normalize(input.ray_os);
                 const float2 ray_hits = sphere_intersect(camera_pos_os, ray_os, float4(0, 0, 0, input.sphere_radius_os));
                 if(ray_hits.y < 0) {
-                    output.depth = 0;
-                    discard; // Outside and no intersect
+                    output.depth = 0; discard; // Outside and no intersect
                 } else if(ray_hits.x < 0) {
                     output.depth = UNITY_NEAR_CLIP_VALUE; // Inside sphere -> Fullscreen
                 } else {

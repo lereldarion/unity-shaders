@@ -15,6 +15,7 @@ Shader "Lereldarion/Debug/TBN" {
             "RenderType" = "Overlay"
             "VRCFallback" = "Hidden"
             "PreviewType" = "Plane"
+            "IgnoreProjector" = "True"
         }
         
         Cull Off

@@ -21,6 +21,7 @@ Shader "Lereldarion/Overlay/HUD" {
             "RenderType" = "Overlay"
             "VRCFallback" = "Hidden"
             "PreviewType" = "Plane"
+            "IgnoreProjector" = "True"
         }
         
         Cull Off

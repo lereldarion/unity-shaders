@@ -25,6 +25,7 @@ Shader "Lereldarion/Overlay/Grid" {
             "RenderType" = "Overlay"
             "VRCFallback" = "Hidden"
             "PreviewType" = "Plane"
+            "IgnoreProjector" = "True"
         }
         
         Cull Off

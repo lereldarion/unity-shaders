@@ -21,6 +21,7 @@ Shader "Lereldarion/Overlay/GammaAdjust" {
             "RenderType" = "Overlay"
             "VRCFallback" = "Hidden"
             "PreviewType" = "Plane"
+            "IgnoreProjector" = "True"
         }
         
         Cull Off

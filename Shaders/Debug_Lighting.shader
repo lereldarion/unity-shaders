@@ -37,6 +37,7 @@ Shader "Lereldarion/Debug/Lighting" {
             "RenderType" = "Overlay"
             "VRCFallback" = "Hidden"
             "PreviewType" = "Plane"
+            "IgnoreProjector" = "True"
         }
 
         CGINCLUDE
