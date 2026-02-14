@@ -15,6 +15,8 @@ These overlay shaders are useful on avatars for world analysis (wireframe, norma
 All overlays have multiple modes, selected by `_Overlay_Mode` property :
 - `Mesh` : applied on the mesh
 - `Fullscreen` : applied as a screenspace shader (fullscreen).
+- WIP `Billboard Sphere` : emulate a sphere mesh, with fullscreen when camera is inside.
+  Support mesh must be a flat surface. The sphere is defined by `UV0` : center at `(0.5, 0.5)`, radius `0.5`. Example of valid mesh : unity quad.
 
 If you use a fullscreen mode, it is good practice to only animate the mode to fullscreen **locally** (`IsLocal` VRChat parameter) to avoid annoying others.
 Fullscreen mode uses [VRChat shader globals](https://creators.vrchat.com/worlds/udon/vrc-graphics/vrchat-shader-globals/) to ignore mirror (always) and secondary cameras (toggle).
