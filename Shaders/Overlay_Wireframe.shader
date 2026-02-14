@@ -61,6 +61,44 @@ Shader "Lereldarion/Overlay/Wireframe" {
             uniform float4 _CameraDepthTexture_TexelSize;
 
             static const float nan = asfloat(uint(-1)); // 0xFFF...FFF should be a quiet NaN
+
+            // unity_MatrixInvP is not provided in BIRP. unity_CameraInvProjection is only the basic camera projection (no VR components).
+            // Using d4rkpl4y3r technique of patching unity_CameraInvProjection (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
+            float4x4 make_unity_MatrixInvP() {
+                float4x4 flipZ = float4x4(1, 0, 0, 0,
+                                        0, 1, 0, 0,
+                                        0, 0, -1, 1,
+                                        0, 0, 0, 1);
+                float4x4 scaleZ = float4x4(1, 0, 0, 0,
+                                        0, 1, 0, 0,
+                                        0, 0, 2, -1,
+                                        0, 0, 0, 1);
+                float4x4 invP = unity_CameraInvProjection;
+                float4x4 flipY = float4x4(1, 0, 0, 0,
+                                        0, _ProjectionParams.x, 0, 0,
+                                        0, 0, 1, 0,
+                                        0, 0, 0, 1);
+                float4x4 m = mul(scaleZ, flipZ);
+                m = mul(invP, m);
+                m = mul(flipY, m);
+                m._24 *= _ProjectionParams.x;
+                m._42 *= -1;
+                return m;
+            }
+            static float4x4 unity_MatrixInvP = make_unity_MatrixInvP();
+
+            float3 position_vs_at_pixel(float2 pixel_position) {
+                // HLSLSupport.hlsl : DepthTexture is a TextureArray in SPS-I, so its size should be safe to use to get uvs.
+                float2 depth_texture_uv = pixel_position * _CameraDepthTexture_TexelSize.xy;
+                float raw = SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(depth_texture_uv, 0, 0)); // [0,1]
+
+                float2 clipPos = ((pixel_position / _ScreenParams.xy) * 2 - 1) * float2(1, -1);
+                #ifdef UNITY_SINGLE_PASS_STEREO
+                    clipPos.x -= 2 * unity_StereoEyeIndex;
+                #endif
+                float4 v = mul(unity_MatrixInvP, float4(clipPos, raw, 1));
+                return v.xyz / v.w;
+            }
             
             void vertex_stage (VertexInput input, uint vertex_id : SV_VertexID, out FragmentInput output) {
                 UNITY_SETUP_INSTANCE_ID(input);
@@ -87,77 +125,25 @@ Shader "Lereldarion/Overlay/Wireframe" {
                 }
             }
 
-            // unity_MatrixInvP is not provided in BIRP. unity_CameraInvProjection is only the basic camera projection (no VR components).
-            // Using d4rkpl4y3r technique of patching unity_CameraInvProjection (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
-            struct DepthReconstruction {
-                float2 pixel_position;
-                float4x4 cs_to_vs;
-
-                static DepthReconstruction init(float4 fragment_sv_position) {
-                    DepthReconstruction o;
-                    o.pixel_position = fragment_sv_position.xy;
-
-                    float4x4 flipZ = float4x4(1, 0, 0, 0,
-                                            0, 1, 0, 0,
-                                            0, 0, -1, 1,
-                                            0, 0, 0, 1);
-                    float4x4 scaleZ = float4x4(1, 0, 0, 0,
-                                            0, 1, 0, 0,
-                                            0, 0, 2, -1,
-                                            0, 0, 0, 1);
-                    float4x4 invP = unity_CameraInvProjection;
-                    float4x4 flipY = float4x4(1, 0, 0, 0,
-                                            0, _ProjectionParams.x, 0, 0,
-                                            0, 0, 1, 0,
-                                            0, 0, 0, 1);
-                    o.cs_to_vs = mul(scaleZ, flipZ);
-                    o.cs_to_vs = mul(invP, o.cs_to_vs);
-                    o.cs_to_vs = mul(flipY, o.cs_to_vs);
-                    o.cs_to_vs._24 *= _ProjectionParams.x;
-                    o.cs_to_vs._42 *= -1;
-
-                    return o;
-                }
-
-                float3 position_vs() {
-                    return position_vs(float2(0, 0));
-                }
-                
-                float3 position_vs(float2 pixel_shift) {
-                    float2 shifted_sv_position = pixel_position + pixel_shift;
-                    // HLSLSupport.hlsl : DepthTexture is a TextureArray in SPS-I, so its size should be safe to use to get uvs.
-                    float2 depth_texture_uv = shifted_sv_position * _CameraDepthTexture_TexelSize.xy;
-                    float raw = SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(depth_texture_uv, 0, 0)); // [0,1]
-
-                    float2 clipPos = ((shifted_sv_position / _ScreenParams.xy) * 2 - 1) * float2(1, -1);
-                    #ifdef UNITY_SINGLE_PASS_STEREO
-                        clipPos.x -= 2 * unity_StereoEyeIndex;
-                    #endif
-                    float4 v = mul(cs_to_vs, float4(clipPos, raw, 1));
-                    return v.xyz / v.w;
-                }
-            };
-
             fixed4 fragment_stage (FragmentInput input) : SV_Target {
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
 
-                DepthReconstruction dr = DepthReconstruction::init(input.position);
-                float3 vs_0_0 = dr.position_vs();
-                float3 vs_m_0 = dr.position_vs(float2(-1, 0));
-                float3 vs_0_p = dr.position_vs(float2(0, 1));
-                float3 vs_p_0 = dr.position_vs(float2(1, 0));
-                float3 vs_0_m = dr.position_vs(float2(0, -1));
+                const float3 vs_0_0 = position_vs_at_pixel(input.position.xy);
+                const float3 vs_m_0 = position_vs_at_pixel(input.position.xy + float2(-1, 0));
+                const float3 vs_0_p = position_vs_at_pixel(input.position.xy + float2(0, 1));
+                const float3 vs_p_0 = position_vs_at_pixel(input.position.xy + float2(1, 0));
+                const float3 vs_0_m = position_vs_at_pixel(input.position.xy + float2(0, -1));
                 
                 // 3 normals from origin, with 3 quadrants
-                float3 normal_vs_m_p = normalize(cross(vs_0_p - vs_0_0, vs_m_0 - vs_0_0));
-                float3 normal_vs_p_m = normalize(cross(vs_0_m - vs_0_0, vs_p_0 - vs_0_0));
-                float3 normal_vs_p_p = normalize(cross(vs_p_0 - vs_0_0, vs_0_p - vs_0_0));
+                const float3 normal_vs_m_p = normalize(cross(vs_0_p - vs_0_0, vs_m_0 - vs_0_0));
+                const float3 normal_vs_p_m = normalize(cross(vs_0_m - vs_0_0, vs_p_0 - vs_0_0));
+                const float3 normal_vs_p_p = normalize(cross(vs_p_0 - vs_0_0, vs_0_p - vs_0_0));
                 
                 // Highlight differences in normals. Does not need WS for that.
-                float3 o = 1;
-                float sum_normal_differences = dot(o, abs(normal_vs_p_p - normal_vs_m_p)) + dot(o, abs(normal_vs_p_m - normal_vs_m_p));
-                float c = saturate(sum_normal_differences);
+                const float3 o = 1;
+                const float sum_normal_differences = dot(o, abs(normal_vs_p_p - normal_vs_m_p)) + dot(o, abs(normal_vs_p_m - normal_vs_m_p));
+                const float c = saturate(sum_normal_differences);
                 return float4(c.xxx, 1);
             }
             ENDCG

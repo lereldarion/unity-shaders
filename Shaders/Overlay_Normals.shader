@@ -90,57 +90,41 @@ Shader "Lereldarion/Overlay/Normals" {
 
             // unity_MatrixInvP is not provided in BIRP. unity_CameraInvProjection is only the basic camera projection (no VR components).
             // Using d4rkpl4y3r technique of patching unity_CameraInvProjection (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
-            struct DepthReconstruction {
-                float2 pixel_position;
-                float4x4 cs_to_vs;
+            float4x4 make_unity_MatrixInvP() {
+                float4x4 flipZ = float4x4(1, 0, 0, 0,
+                                        0, 1, 0, 0,
+                                        0, 0, -1, 1,
+                                        0, 0, 0, 1);
+                float4x4 scaleZ = float4x4(1, 0, 0, 0,
+                                        0, 1, 0, 0,
+                                        0, 0, 2, -1,
+                                        0, 0, 0, 1);
+                float4x4 invP = unity_CameraInvProjection;
+                float4x4 flipY = float4x4(1, 0, 0, 0,
+                                        0, _ProjectionParams.x, 0, 0,
+                                        0, 0, 1, 0,
+                                        0, 0, 0, 1);
+                float4x4 m = mul(scaleZ, flipZ);
+                m = mul(invP, m);
+                m = mul(flipY, m);
+                m._24 *= _ProjectionParams.x;
+                m._42 *= -1;
+                return m;
+            }
+            static float4x4 unity_MatrixInvP = make_unity_MatrixInvP();
 
-                static float4x4 make_cs_to_vs() {
-                    float4x4 flipZ = float4x4(1, 0, 0, 0,
-                                            0, 1, 0, 0,
-                                            0, 0, -1, 1,
-                                            0, 0, 0, 1);
-                    float4x4 scaleZ = float4x4(1, 0, 0, 0,
-                                            0, 1, 0, 0,
-                                            0, 0, 2, -1,
-                                            0, 0, 0, 1);
-                    float4x4 invP = unity_CameraInvProjection;
-                    float4x4 flipY = float4x4(1, 0, 0, 0,
-                                            0, _ProjectionParams.x, 0, 0,
-                                            0, 0, 1, 0,
-                                            0, 0, 0, 1);
-                    float4x4 m = mul(scaleZ, flipZ);
-                    m = mul(invP, m);
-                    m = mul(flipY, m);
-                    m._24 *= _ProjectionParams.x;
-                    m._42 *= -1;
-                    return m;
-                }
+            float3 position_vs_at_pixel(float2 pixel_position) {
+                // HLSLSupport.hlsl : DepthTexture is a TextureArray in SPS-I, so its size should be safe to use to get uvs.
+                float2 depth_texture_uv = pixel_position * _CameraDepthTexture_TexelSize.xy;
+                float raw = SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(depth_texture_uv, 0, 0)); // [0,1]
 
-                static DepthReconstruction init(float4 fragment_sv_position) {
-                    DepthReconstruction o;
-                    o.pixel_position = fragment_sv_position.xy;
-                    o.cs_to_vs = make_cs_to_vs();
-                    return o;
-                }
-
-                float3 position_vs() {
-                    return position_vs(float2(0, 0));
-                }
-                
-                float3 position_vs(float2 pixel_shift) {
-                    float2 shifted_sv_position = pixel_position + pixel_shift;
-                    // HLSLSupport.hlsl : DepthTexture is a TextureArray in SPS-I, so its size should be safe to use to get uvs.
-                    float2 depth_texture_uv = shifted_sv_position * _CameraDepthTexture_TexelSize.xy;
-                    float raw = SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(depth_texture_uv, 0, 0)); // [0,1]
-
-                    float2 clipPos = ((shifted_sv_position / _ScreenParams.xy) * 2 - 1) * float2(1, -1);
-                    #ifdef UNITY_SINGLE_PASS_STEREO
-                        clipPos.x -= 2 * unity_StereoEyeIndex;
-                    #endif
-                    float4 v = mul(cs_to_vs, float4(clipPos, raw, 1));
-                    return v.xyz / v.w;
-                }
-            };
+                float2 clipPos = ((pixel_position / _ScreenParams.xy) * 2 - 1) * float2(1, -1);
+                #ifdef UNITY_SINGLE_PASS_STEREO
+                    clipPos.x -= 2 * unity_StereoEyeIndex;
+                #endif
+                float4 v = mul(unity_MatrixInvP, float4(clipPos, raw, 1));
+                return v.xyz / v.w;
+            }
 
             // https://iquilezles.org/articles/intersectors/
             float2 sphere_intersect(float3 ro, float3 rd, float4 sph) {
@@ -184,7 +168,7 @@ Shader "Lereldarion/Overlay/Normals" {
                         output.position = float4(ndc * swap, UNITY_NEAR_CLIP_VALUE, 1);
 
                         #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
-                        const float4 v = mul(DepthReconstruction::make_cs_to_vs(), output.position);
+                        const float4 v = mul(unity_MatrixInvP, output.position);
                         output.ray_os = mul(unity_WorldToObject, mul(unity_MatrixInvV, v.xyz / v.w));
                         #endif
                     } else {
@@ -231,14 +215,13 @@ Shader "Lereldarion/Overlay/Normals" {
                 }
                 #endif
 
-                DepthReconstruction dr = DepthReconstruction::init(input.position);
-                float3 vs_0_0 = dr.position_vs();
-                float3 vs_m_0 = dr.position_vs(float2(-1, 0));
-                float3 vs_0_p = dr.position_vs(float2(0, 1));
+                const float3 vs_0_0 = position_vs_at_pixel(input.position.xy);
+                const float3 vs_m_0 = position_vs_at_pixel(input.position.xy + float2(-1, 0));
+                const float3 vs_0_p = position_vs_at_pixel(input.position.xy + float2(0, 1));
 
                 // Normals : cross product between pixel reconstructed VS, then WS
-                float3 normal_dir_vs = cross(vs_0_p - vs_0_0, vs_m_0 - vs_0_0);
-                float3 normal_ws = normalize(mul((float3x3) unity_MatrixInvV, normal_dir_vs));
+                const float3 normal_dir_vs = cross(vs_0_p - vs_0_0, vs_m_0 - vs_0_0);
+                const float3 normal_ws = normalize(mul((float3x3) unity_MatrixInvV, normal_dir_vs));
                 output.color = half4(LinearToGammaSpace(normal_ws * 0.5 + 0.5), 1);
             }
             ENDCG

@@ -72,21 +72,30 @@ Shader "Lereldarion/Overlay/HUD" {
             static const float pi = UNITY_PI;
             static const float one_deg_rad = pi / 180;
 
-            // Replacement for missing invP by d4rkpl4y3r (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
-            float4 ClipToViewPos(float4 clipPos) {
-                float4 normalizedClipPos = float4(clipPos.xyz / clipPos.w, 1);
-                normalizedClipPos.z = 1 - normalizedClipPos.z;
-                normalizedClipPos.z = normalizedClipPos.z * 2 - 1;
+            // unity_MatrixInvP is not provided in BIRP. unity_CameraInvProjection is only the basic camera projection (no VR components).
+            // Using d4rkpl4y3r technique of patching unity_CameraInvProjection (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
+            float4x4 make_unity_MatrixInvP() {
+                float4x4 flipZ = float4x4(1, 0, 0, 0,
+                                        0, 1, 0, 0,
+                                        0, 0, -1, 1,
+                                        0, 0, 0, 1);
+                float4x4 scaleZ = float4x4(1, 0, 0, 0,
+                                        0, 1, 0, 0,
+                                        0, 0, 2, -1,
+                                        0, 0, 0, 1);
                 float4x4 invP = unity_CameraInvProjection;
-                // do projection flip on this, found empirically
-                invP._24 *= _ProjectionParams.x;
-                // this is needed for mirrors to work properly, found empirically
-                invP._42 *= -1;
-                float4 viewPos = mul(invP, normalizedClipPos);
-                // and the y coord needs to flip for flipped projection, found empirically
-                viewPos.y *= _ProjectionParams.x;
-                return viewPos;
+                float4x4 flipY = float4x4(1, 0, 0, 0,
+                                        0, _ProjectionParams.x, 0, 0,
+                                        0, 0, 1, 0,
+                                        0, 0, 0, 1);
+                float4x4 m = mul(scaleZ, flipZ);
+                m = mul(invP, m);
+                m = mul(flipY, m);
+                m._24 *= _ProjectionParams.x;
+                m._42 *= -1;
+                return m;
             }
+            static float4x4 unity_MatrixInvP = make_unity_MatrixInvP();
 
             // SDF anti-alias blend
             // https://blog.pkh.me/p/44-perfecting-anti-aliasing-on-signed-distance-functions.html
@@ -353,7 +362,7 @@ Shader "Lereldarion/Overlay/HUD" {
                         output.position = float4(ndc * swap, UNITY_NEAR_CLIP_VALUE, 1);
 
                         const float3 forward_vs = float3(0, 0, -1);
-                        const float4 position_vs = ClipToViewPos(output.position);
+                        const float4 position_vs = mul(unity_MatrixInvP, output.position);
                         output.ray_ws = mul(unity_MatrixInvV, position_vs.xyz / position_vs.w);
                         forward_normal_ws = normalize(mul(unity_MatrixInvV, forward_vs));
                     } else {

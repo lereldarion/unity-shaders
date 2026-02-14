@@ -71,7 +71,45 @@ Shader "Lereldarion/Overlay/Grid" {
             float4 _CameraDepthTexture_TexelSize;
 
             static const float nan = asfloat(uint(-1)); // 0xFFF...FFF should be a quiet NaN
-            
+
+            // unity_MatrixInvP is not provided in BIRP. unity_CameraInvProjection is only the basic camera projection (no VR components).
+            // Using d4rkpl4y3r technique of patching unity_CameraInvProjection (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
+            float4x4 make_unity_MatrixInvP() {
+                float4x4 flipZ = float4x4(1, 0, 0, 0,
+                                        0, 1, 0, 0,
+                                        0, 0, -1, 1,
+                                        0, 0, 0, 1);
+                float4x4 scaleZ = float4x4(1, 0, 0, 0,
+                                        0, 1, 0, 0,
+                                        0, 0, 2, -1,
+                                        0, 0, 0, 1);
+                float4x4 invP = unity_CameraInvProjection;
+                float4x4 flipY = float4x4(1, 0, 0, 0,
+                                        0, _ProjectionParams.x, 0, 0,
+                                        0, 0, 1, 0,
+                                        0, 0, 0, 1);
+                float4x4 m = mul(scaleZ, flipZ);
+                m = mul(invP, m);
+                m = mul(flipY, m);
+                m._24 *= _ProjectionParams.x;
+                m._42 *= -1;
+                return m;
+            }
+            static float4x4 unity_MatrixInvP = make_unity_MatrixInvP();
+
+            float3 position_vs_at_pixel(float2 pixel_position) {
+                // HLSLSupport.hlsl : DepthTexture is a TextureArray in SPS-I, so its size should be safe to use to get uvs.
+                float2 depth_texture_uv = pixel_position * _CameraDepthTexture_TexelSize.xy;
+                float raw = SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(depth_texture_uv, 0, 0)); // [0,1]
+
+                float2 clipPos = ((pixel_position / _ScreenParams.xy) * 2 - 1) * float2(1, -1);
+                #ifdef UNITY_SINGLE_PASS_STEREO
+                    clipPos.x -= 2 * unity_StereoEyeIndex;
+                #endif
+                float4 v = mul(unity_MatrixInvP, float4(clipPos, raw, 1));
+                return v.xyz / v.w;
+            }
+
             void vertex_stage (VertexInput input, uint vertex_id : SV_VertexID, out FragmentInput output) {
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_TRANSFER_INSTANCE_ID(input, output);
@@ -96,58 +134,6 @@ Shader "Lereldarion/Overlay/Grid" {
                     output.position = UnityObjectToClipPos(input.position_os);
                 }
             }
-
-            // unity_MatrixInvP is not provided in BIRP. unity_CameraInvProjection is only the basic camera projection (no VR components).
-            // Using d4rkpl4y3r technique of patching unity_CameraInvProjection (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
-            struct DepthReconstruction {
-                float2 pixel_position;
-                float4x4 cs_to_vs;
-
-                static DepthReconstruction init(float4 fragment_sv_position) {
-                    DepthReconstruction o;
-                    o.pixel_position = fragment_sv_position.xy;
-
-                    float4x4 flipZ = float4x4(1, 0, 0, 0,
-                                            0, 1, 0, 0,
-                                            0, 0, -1, 1,
-                                            0, 0, 0, 1);
-                    float4x4 scaleZ = float4x4(1, 0, 0, 0,
-                                            0, 1, 0, 0,
-                                            0, 0, 2, -1,
-                                            0, 0, 0, 1);
-                    float4x4 invP = unity_CameraInvProjection;
-                    float4x4 flipY = float4x4(1, 0, 0, 0,
-                                            0, _ProjectionParams.x, 0, 0,
-                                            0, 0, 1, 0,
-                                            0, 0, 0, 1);
-                    o.cs_to_vs = mul(scaleZ, flipZ);
-                    o.cs_to_vs = mul(invP, o.cs_to_vs);
-                    o.cs_to_vs = mul(flipY, o.cs_to_vs);
-                    o.cs_to_vs._24 *= _ProjectionParams.x;
-                    o.cs_to_vs._42 *= -1;
-
-                    return o;
-                }
-
-                float3 position_vs() {
-                    return position_vs(float2(0, 0));
-                }
-                
-                float3 position_vs(float2 pixel_shift) {
-                    float2 shifted_sv_position = pixel_position + pixel_shift;
-                    // HLSLSupport.hlsl : DepthTexture is a TextureArray in SPS-I, so its size should be safe to use to get uvs.
-                    float2 depth_texture_uv = shifted_sv_position * _CameraDepthTexture_TexelSize.xy;
-                    float raw = SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(depth_texture_uv, 0, 0)); // [0,1]
-                    if(!(0 < raw && raw < 1)) { discard; } // Remove skybox grid (broken)
-
-                    float2 clipPos = ((shifted_sv_position / _ScreenParams.xy) * 2 - 1) * float2(1, -1);
-                    #ifdef UNITY_SINGLE_PASS_STEREO
-                        clipPos.x -= 2 * unity_StereoEyeIndex;
-                    #endif
-                    float4 v = mul(cs_to_vs, float4(clipPos, raw, 1));
-                    return v.xyz / v.w;
-                }
-            };
             
             float3 bgolus_uv_01_grid(float3 uv, float line_width) {
                 // From https://bgolus.medium.com/the-best-darn-grid-shader-yet-727f9278b9d8
@@ -165,14 +151,11 @@ Shader "Lereldarion/Overlay/Grid" {
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
 
-                DepthReconstruction dr = DepthReconstruction::init(input.position);
-                float3 vs_0_0 = dr.position_vs();
-                float3 ws = mul(unity_MatrixInvV, float4(vs_0_0, 1)).xyz;
-
-                float3 grid_pattern = bgolus_uv_01_grid(ws / _Grid_Size_Meters, _Grid_Line_Width_01);
+                const float3 position_ws = mul(unity_MatrixInvV, float4(position_vs_at_pixel(input.position.xy), 1)).xyz;
+                const float3 grid_pattern = bgolus_uv_01_grid(position_ws / _Grid_Size_Meters, _Grid_Line_Width_01);
 
                 // Replace color only if we are on a line
-                float opacity = max(grid_pattern.x, max(grid_pattern.y, grid_pattern.z));
+                const float opacity = max(grid_pattern.x, max(grid_pattern.y, grid_pattern.z));
                 return fixed4(grid_pattern, opacity);                                
             }
             ENDCG
