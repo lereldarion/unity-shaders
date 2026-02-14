@@ -51,8 +51,7 @@ Shader "Lereldarion/Overlay/HUD" {
             uniform uint _Overlay_Fullscreen_Vertex_Order;
             uniform float _Overlay_Fullscreen_Only_Main_Camera;
 
-            uniform SamplerState sampler_clamp_bilinear;
-            uniform Texture2D<float3> _MSDF_Glyph_Atlas;
+            UNITY_DECLARE_TEX2D(_MSDF_Glyph_Atlas);
 
             uniform float _VRChatMirrorMode;
             uniform float _VRChatCameraMode;
@@ -184,7 +183,7 @@ Shader "Lereldarion/Overlay/HUD" {
                     const uint atlas_column = sampling_atlas_id - atlas_row * grid_columns;
                     const float2 atlas_offset_px = float2(atlas_column * cell_size_px.x, atlas_size_px.y - cell_size_px.y * (atlas_row + 1)) + 0.5;
                     const float2 glyph_offset_px = sampling_offset_px - float2(glyph_left_px, 0);
-                    const float tex_sd = median(_MSDF_Glyph_Atlas.SampleLevel(sampler_clamp_bilinear, (glyph_offset_px + atlas_offset_px) / atlas_size_px, 0)) - 0.5;
+                    const float tex_sd = median(UNITY_SAMPLE_TEX2D_LOD(_MSDF_Glyph_Atlas, (glyph_offset_px + atlas_offset_px) / atlas_size_px, 0).rgb) - 0.5;
                     // tex_sd is in [-0.5, 0.5]. It represents texture pixel ranges between [-msdf_pixel_range, msdf_pixel_range], using the inverse SDF direction.
                     const float tex_sd_pixel = -tex_sd * 2 * atlas_distance_range_px;
                     return inverse_scale * tex_sd_pixel;
