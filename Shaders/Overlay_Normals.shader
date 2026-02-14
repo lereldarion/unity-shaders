@@ -13,7 +13,8 @@ Shader "Lereldarion/Overlay/Normals" {
         [IntRange] _Overlay_Fullscreen_Vertex_Order("Fullscreen vertex order (mesh dependent)", Range(0, 2)) = 0
         [ToggleUI] _Overlay_Fullscreen_Only_Main_Camera("Fullscreen mode restricted to main camera", Float) = 1
         [HideInInspector] _Overlay_Noise_Texture("Noise texture for border effect", 2D) = "" {}
-        _Overlay_Border_Dissolve("Border dissolve", Vector) = (5, 1, 0.8, 0.05)
+        [Enum(Surface Only, 0, Filled, 1)] _Overlay_Sphere_Filled("Sphere type", Float) = 1
+        _Overlay_Sphere_Border_Dissolve("Sphere border dissolve (polar scale, width, speed)", Vector) = (5, 1, 0.2, 0.05)
     }
     SubShader {
         Tags {
@@ -80,7 +81,8 @@ Shader "Lereldarion/Overlay/Normals" {
             uniform float _Overlay_Mode;
             uniform uint _Overlay_Fullscreen_Vertex_Order;
             uniform float _Overlay_Fullscreen_Only_Main_Camera;
-            uniform float4 _Overlay_Border_Dissolve;
+            uniform float _Overlay_Sphere_Filled;
+            uniform float4 _Overlay_Sphere_Border_Dissolve;
 
             UNITY_DECLARE_TEX2D(_Overlay_Noise_Texture);
 
@@ -145,16 +147,16 @@ Shader "Lereldarion/Overlay/Normals" {
 
             bool border_pattern_discard(float2 p) {
                 const float radius = length(p);
-                const float start_radius = _Overlay_Border_Dissolve.z;
-                if(radius < start_radius) { return false; }
+                const float start_radius = 1 - _Overlay_Sphere_Border_Dissolve.z;
+                if(radius <= start_radius) { return false; }
 
-                const float2 polar = _Overlay_Border_Dissolve.xy *  float2(atan2(p.y, p.x) / UNITY_TWO_PI, radius) + float2(0, - _Time.y * _Overlay_Border_Dissolve.w);
-                const float2 noise_scales = normalize(float2(1, 0.5));
-                const float noise = dot(noise_scales, float2(
+                const float2 polar = _Overlay_Sphere_Border_Dissolve.xy * float2(atan2(p.y, p.x) / UNITY_TWO_PI, radius) + float2(0, - _Time.y * _Overlay_Sphere_Border_Dissolve.w);
+                const float2 noise_scales = float2(1, 0.5);
+                const float noise = dot(noise_scales / dot(1, noise_scales), float2(
                     UNITY_SAMPLE_TEX2D_LOD(_Overlay_Noise_Texture, polar, 0).r,
                     UNITY_SAMPLE_TEX2D_LOD(_Overlay_Noise_Texture, polar * 2, 0).r
                 ));
-                return noise < smoothstep(start_radius, 1 + 1e-6, radius);
+                return noise <= smoothstep(start_radius, 1 + 1e-6, radius);
             }
             
             void vertex_stage (VertexInput input, uint vertex_id : SV_VertexID, out FragmentInput output) {
@@ -190,7 +192,7 @@ Shader "Lereldarion/Overlay/Normals" {
                         #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
                         const float4 v = mul(unity_MatrixInvP, output.position);
                         output.ray_os = mul(unity_WorldToObject, mul(unity_MatrixInvV, v.xyz / v.w));
-                        output.disk_uv = 0; // 
+                        output.disk_uv = 0; // No border dissolve in fullscreen
                         #endif
                     } else {
                         output.position = nan.xxxx; // Vertex discard
@@ -226,11 +228,11 @@ Shader "Lereldarion/Overlay/Normals" {
                 const float2 ray_hits = sphere_intersect(camera_pos_os, ray_os, float4(0, 0, 0, input.sphere_radius_os));
                 if(ray_hits.y < 0 || border_pattern_discard(input.disk_uv)) {
                     output.depth = 0; discard; // Outside and no intersect
-                } else if(ray_hits.x < 0) {
+                } else if(ray_hits.x < 0 && _Overlay_Sphere_Filled) {
                     output.depth = UNITY_NEAR_CLIP_VALUE; // Inside sphere -> Fullscreen
                 } else {
-                    // Outside sphere, compute proper depth
-                    const float4 sphere = UnityObjectToClipPos(camera_pos_os + ray_hits.x * ray_os);
+                    // Display on first sphere intersection, compute proper depth
+                    const float4 sphere = UnityObjectToClipPos(camera_pos_os + (ray_hits.x >= 0 ? ray_hits.x : ray_hits.y) * ray_os);
                     output.depth = sphere.z / sphere.w;
                 }
                 #endif
