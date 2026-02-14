@@ -4,14 +4,16 @@
 // An overlay which displays normals of triangles in world space, from data sampled in the depth texture. Requires dynamic lighting to work (for the depth texture).
 //
 // Initial idea from https://github.com/netri/Neitri-Unity-Shaders
-// Improved with SPS-I support, Fullscreen "screenspace" mode.
 // Using d4rkpl4y3r technique of patching unity_CameraInvProjection (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
+// Improved with SPS-I support, Fullscreen "screenspace" mode, billboard sphere mode
 
 Shader "Lereldarion/Overlay/Normals" {
     Properties {
         [KeywordEnum(Mesh, Fullscreen, Billboard Sphere)] _Overlay_Mode("Overlay mode", Float) = 0
         [IntRange] _Overlay_Fullscreen_Vertex_Order("Fullscreen vertex order (mesh dependent)", Range(0, 2)) = 0
         [ToggleUI] _Overlay_Fullscreen_Only_Main_Camera("Fullscreen mode restricted to main camera", Float) = 1
+        [HideInInspector] _Overlay_Noise_Texture("Noise texture for border effect", 2D) = "" {}
+        _Overlay_Border_Dissolve("Border dissolve", Vector) = (5, 1, 0.8, 0.05)
     }
     SubShader {
         Tags {
@@ -58,6 +60,7 @@ Shader "Lereldarion/Overlay/Normals" {
                 #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
                 float3 ray_os : RAY_OS;
                 float sphere_radius_os : SPHERE_RADIUS_OS;
+                float2 disk_uv : DISK_UV;
                 #endif
             };
             struct FragmentOutput {
@@ -66,7 +69,7 @@ Shader "Lereldarion/Overlay/Normals" {
                 #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
                 // Generate the quad in front of the sphere, and set sphere depth further away. Use conservative depth to keep early Z culling.
                 // https://microsoft.github.io/DirectX-Specs/d3d/archive/D3D11_3_FunctionalSpec.htm#ConservativeoDepth
-                #ifdef UNITY_REVERSED_Z
+                #if defined(UNITY_REVERSED_Z)
                 float depth : SV_DepthLessEqual; // far < near (depths), [0, 1] on DX11W
                 #else
                 float depth : SV_DepthGreaterEqual; // near > far
@@ -77,6 +80,9 @@ Shader "Lereldarion/Overlay/Normals" {
             uniform float _Overlay_Mode;
             uniform uint _Overlay_Fullscreen_Vertex_Order;
             uniform float _Overlay_Fullscreen_Only_Main_Camera;
+            uniform float4 _Overlay_Border_Dissolve;
+
+            UNITY_DECLARE_TEX2D(_Overlay_Noise_Texture);
 
             uniform float _VRChatMirrorMode;
             uniform float _VRChatCameraMode;
@@ -119,7 +125,7 @@ Shader "Lereldarion/Overlay/Normals" {
                 float raw = SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(depth_texture_uv, 0, 0)); // [0,1]
 
                 float2 clipPos = ((pixel_position / _ScreenParams.xy) * 2 - 1) * float2(1, -1);
-                #ifdef UNITY_SINGLE_PASS_STEREO
+                #if defined(UNITY_SINGLE_PASS_STEREO)
                     clipPos.x -= 2 * unity_StereoEyeIndex;
                 #endif
                 float4 v = mul(unity_MatrixInvP, float4(clipPos, raw, 1));
@@ -136,6 +142,20 @@ Shader "Lereldarion/Overlay/Normals" {
                 h = sqrt(h);
                 return float2(-b - h, -b + h);
             }
+
+            bool border_pattern_discard(float2 p) {
+                const float radius = length(p);
+                const float start_radius = _Overlay_Border_Dissolve.z;
+                if(radius < start_radius) { return false; }
+
+                const float2 polar = _Overlay_Border_Dissolve.xy *  float2(atan2(p.y, p.x) / UNITY_TWO_PI, radius) + float2(0, - _Time.y * _Overlay_Border_Dissolve.w);
+                const float2 noise_scales = normalize(float2(1, 0.5));
+                const float noise = dot(noise_scales, float2(
+                    UNITY_SAMPLE_TEX2D_LOD(_Overlay_Noise_Texture, polar, 0).r,
+                    UNITY_SAMPLE_TEX2D_LOD(_Overlay_Noise_Texture, polar * 2, 0).r
+                ));
+                return noise < smoothstep(start_radius, 1 + 1e-6, radius);
+            }
             
             void vertex_stage (VertexInput input, uint vertex_id : SV_VertexID, out FragmentInput output) {
                 UNITY_SETUP_INSTANCE_ID(input);
@@ -147,9 +167,9 @@ Shader "Lereldarion/Overlay/Normals" {
                 #elif defined(_OVERLAY_MODE_FULLSCREEN)
                 const bool fullscreen = _VRChatMirrorMode == 0 && _VRChatCameraMode * _Overlay_Fullscreen_Only_Main_Camera == 0;
                 #elif defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
-                const float2 disk_uv = 2 * input.uv0 - 1;
+                output.disk_uv = 2 * input.uv0 - 1;
                 const float3 plane_pos_os = input.position_os - dot(input.position_os, input.normal_os) * input.normal_os; // Assume normal_os is normalized
-                const float sphere_radius_sq_os = length_sq(plane_pos_os) / max(length_sq(disk_uv), 1e-6);
+                const float sphere_radius_sq_os = length_sq(plane_pos_os) / max(length_sq(output.disk_uv), 1e-6);
                 output.sphere_radius_os = sqrt(sphere_radius_sq_os);
                 output.ray_os = 0;
                 
@@ -170,12 +190,13 @@ Shader "Lereldarion/Overlay/Normals" {
                         #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
                         const float4 v = mul(unity_MatrixInvP, output.position);
                         output.ray_os = mul(unity_WorldToObject, mul(unity_MatrixInvV, v.xyz / v.w));
+                        output.disk_uv = 0; // 
                         #endif
                     } else {
                         output.position = nan.xxxx; // Vertex discard
                     }
                 } else {
-                    #ifdef _OVERLAY_MODE_BILLBOARD_SPHERE
+                    #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
                     const float3 camera_pos_os = mul(unity_WorldToObject, float4(_WorldSpaceCameraPos, 1)).xyz;
                     const float camera_distance_os = length(camera_pos_os);
     
@@ -187,7 +208,7 @@ Shader "Lereldarion/Overlay/Normals" {
                     
                     //const bool is_orthographic = UNITY_MATRIX_P._m33 == 1.0; // TODO ortho support : no effective radius, and fix camera vector
                     const float apparent_radius = output.sphere_radius_os * sqrt(max(camera_distance_os - output.sphere_radius_os, 0) / (camera_distance_os + output.sphere_radius_os));
-                    input.position_os = mul(float3(disk_uv * apparent_radius, output.sphere_radius_os), billboard);
+                    input.position_os = mul(float3(output.disk_uv * apparent_radius, output.sphere_radius_os), billboard);
                     output.ray_os = input.position_os - camera_pos_os;
                     #endif
 
@@ -199,17 +220,16 @@ Shader "Lereldarion/Overlay/Normals" {
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
 
-                #ifdef _OVERLAY_MODE_BILLBOARD_SPHERE
+                #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
                 const float3 camera_pos_os = mul(unity_WorldToObject, float4(_WorldSpaceCameraPos, 1)).xyz;
                 const float3 ray_os = normalize(input.ray_os);
                 const float2 ray_hits = sphere_intersect(camera_pos_os, ray_os, float4(0, 0, 0, input.sphere_radius_os));
-                if(ray_hits.y < 0) {
+                if(ray_hits.y < 0 || border_pattern_discard(input.disk_uv)) {
                     output.depth = 0; discard; // Outside and no intersect
                 } else if(ray_hits.x < 0) {
                     output.depth = UNITY_NEAR_CLIP_VALUE; // Inside sphere -> Fullscreen
                 } else {
                     // Outside sphere, compute proper depth
-                    // TODO waves on border ?
                     const float4 sphere = UnityObjectToClipPos(camera_pos_os + ray_hits.x * ray_os);
                     output.depth = sphere.z / sphere.w;
                 }
