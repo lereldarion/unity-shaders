@@ -5,7 +5,7 @@
 //
 // Initial idea from https://github.com/netri/Neitri-Unity-Shaders
 // Using d4rkpl4y3r technique of patching unity_CameraInvProjection (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
-// Improved with SPS-I support, Fullscreen "screenspace" mode, billboard sphere mode
+// Improved with SPS-I support, Fullscreen "screenspace" mode, billboard sphere mode, dissolve effect
 
 Shader "Lereldarion/Overlay/Normals" {
     Properties {
@@ -13,8 +13,9 @@ Shader "Lereldarion/Overlay/Normals" {
         [IntRange] _Overlay_Fullscreen_Vertex_Order("Fullscreen vertex order (mesh dependent)", Range(0, 2)) = 0
         [ToggleUI] _Overlay_Fullscreen_Only_Main_Camera("Fullscreen mode restricted to main camera", Float) = 1
         [Enum(Surface Only, 0, Filled, 1)] _Overlay_Sphere_Filled("Sphere type", Float) = 1
+        [Toggle(_OVERLAY_DISSOLVE_ENABLED)] _Overlay_Dissolve("Enable radial dissolve effect", Float) = 0
         _Overlay_Noise_Texture("Noise texture for dissolve", 2D) = "" {}
-        _Overlay_Dissolve("Disk border dissolve radius (from, to)", Vector) = (-1, -2, 0, 0)
+        _Overlay_Radial_Dissolve("[0, 1] UV disk radial dissolve (radius start, end)", Vector) = (0.8, 1, 0, 0)
     }
     SubShader {
         Tags {
@@ -38,6 +39,7 @@ Shader "Lereldarion/Overlay/Normals" {
             #pragma target 5.0
             #pragma multi_compile_instancing
             #pragma multi_compile _OVERLAY_MODE_MESH _OVERLAY_MODE_FULLSCREEN _OVERLAY_MODE_BILLBOARD_SPHERE
+            #pragma multi_compile __ _OVERLAY_DISSOLVE_ENABLED
 
             #pragma vertex vertex_stage
             #pragma fragment fragment_stage
@@ -55,9 +57,12 @@ Shader "Lereldarion/Overlay/Normals" {
             };
             struct FragmentInput {
                 sample float4 position : SV_POSITION; // Explicit interpolation modifier required here
-                float2 disk_uv : DISK_UV;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
                 UNITY_VERTEX_OUTPUT_STEREO
+
+                #if defined(_OVERLAY_DISSOLVE_ENABLED)
+                float2 disk_uv : DISK_UV;
+                #endif
 
                 #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
                 float3 ray_os : RAY_OS;
@@ -78,11 +83,10 @@ Shader "Lereldarion/Overlay/Normals" {
                 #endif
             };
 
-            uniform float _Overlay_Mode;
             uniform uint _Overlay_Fullscreen_Vertex_Order;
             uniform float _Overlay_Fullscreen_Only_Main_Camera;
             uniform float _Overlay_Sphere_Filled;
-            uniform float2 _Overlay_Dissolve;
+            uniform float2 _Overlay_Radial_Dissolve;
 
             UNITY_DECLARE_TEX2D(_Overlay_Noise_Texture);
             uniform float4 _Overlay_Noise_Texture_ST;
@@ -149,7 +153,7 @@ Shader "Lereldarion/Overlay/Normals" {
             bool border_pattern_discard(float2 p) {
                 const float radius = length(p);
 
-                const float transition = (radius - _Overlay_Dissolve.x) / (_Overlay_Dissolve.y - _Overlay_Dissolve.x);
+                const float transition = (radius - _Overlay_Radial_Dissolve.x) / (_Overlay_Radial_Dissolve.y - _Overlay_Radial_Dissolve.x);
                 const float transition_clamped = saturate(transition);
                 if(transition != transition_clamped) { return transition > 0; } // Fully kept or discarded, do not sample noise.
                 const float threshold = transition_clamped * transition_clamped; // [0, 1] -> [0, 1], starts slow but fast end.
@@ -168,7 +172,7 @@ Shader "Lereldarion/Overlay/Normals" {
                 UNITY_TRANSFER_INSTANCE_ID(input, output);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
 
-                output.disk_uv = 2 * input.uv0 - 1;
+                float2 disk_uv = 2 * input.uv0 - 1;
 
                 #if defined(_OVERLAY_MODE_MESH)
                 const bool fullscreen = false;
@@ -176,7 +180,7 @@ Shader "Lereldarion/Overlay/Normals" {
                 const bool fullscreen = _VRChatMirrorMode == 0 && _VRChatCameraMode * _Overlay_Fullscreen_Only_Main_Camera == 0;
                 #elif defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
                 const float3 plane_pos_os = input.position_os - dot(input.position_os, input.normal_os) * input.normal_os; // Assume normal_os is normalized
-                const float sphere_radius_sq_os = length_sq(plane_pos_os) / max(length_sq(output.disk_uv), 1e-6);
+                const float sphere_radius_sq_os = length_sq(plane_pos_os) / max(length_sq(disk_uv), 1e-6);
                 output.sphere_radius_os = sqrt(sphere_radius_sq_os);
                 output.ray_os = 0;
                 
@@ -193,7 +197,7 @@ Shader "Lereldarion/Overlay/Normals" {
                         const float2 ndc = vertex_id & uint2(2, 1) ? 1 : -1; // [(-1, -1), (-1, 1), (1, -1), (1, 1)]
                         const float2 swap = _Overlay_Fullscreen_Vertex_Order & (vertex_id & uint2(1, 2)) ? -1 : 1;
                         output.position = float4(ndc * swap, UNITY_NEAR_CLIP_VALUE, 1);
-                        output.disk_uv = 0; // No border dissolve in fullscreen
+                        disk_uv = 0; // No border dissolve in fullscreen
 
                         #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
                         const float4 v = mul(unity_MatrixInvP, output.position);
@@ -206,6 +210,8 @@ Shader "Lereldarion/Overlay/Normals" {
                     #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
                     const float3 camera_pos_os = mul(unity_WorldToObject, float4(_WorldSpaceCameraPos, 1)).xyz;
                     const float camera_distance_os = length(camera_pos_os);
+
+                    //const bool is_orthographic = UNITY_MATRIX_P._m33 == 1.0; // or OrthoParams
     
                     const float3 world_up_os = mul(unity_WorldToObject, float3(0, 1, 0));
                     const float3 billboard_normal_os = camera_pos_os / camera_distance_os;
@@ -213,21 +219,26 @@ Shader "Lereldarion/Overlay/Normals" {
                     const float3 billboard_y_os = cross(billboard_normal_os, billboard_x_os);
                     const float3x3 billboard = float3x3(billboard_x_os, billboard_y_os, billboard_normal_os);
                     
-                    //const bool is_orthographic = UNITY_MATRIX_P._m33 == 1.0; // TODO ortho support : no effective radius, and fix camera vector
                     const float apparent_radius = output.sphere_radius_os * sqrt(max(camera_distance_os - output.sphere_radius_os, 0) / (camera_distance_os + output.sphere_radius_os));
-                    input.position_os = mul(float3(output.disk_uv * apparent_radius, output.sphere_radius_os), billboard);
+                    input.position_os = mul(float3(disk_uv * apparent_radius, output.sphere_radius_os), billboard);
                     output.ray_os = input.position_os - camera_pos_os;
                     #endif
 
                     output.position = UnityObjectToClipPos(input.position_os);
                 }
+
+                #if defined(_OVERLAY_DISSOLVE_ENABLED)
+                output.disk_uv = disk_uv;
+                #endif
             }
 
             void fragment_stage (FragmentInput input, out FragmentOutput output) {
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
                 
+                #if defined(_OVERLAY_DISSOLVE_ENABLED)
                 if (border_pattern_discard(input.disk_uv)) { discard; }
+                #endif
                 
                 #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
                 const float3 camera_pos_os = mul(unity_WorldToObject, float4(_WorldSpaceCameraPos, 1)).xyz;
