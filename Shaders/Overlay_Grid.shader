@@ -74,7 +74,10 @@ Shader "Lereldarion/Overlay/Grid" {
 
             // unity_MatrixInvP is not provided in BIRP. unity_CameraInvProjection is only the basic camera projection (no VR components).
             // Using d4rkpl4y3r technique of patching unity_CameraInvProjection (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
-            float4x4 make_unity_MatrixInvP() {
+            // Use after instance id have been set !
+            static float4x4 unity_MatrixInvP;
+            static float4x4 unity_MatrixInvMVP;
+            void setup_unity_MatrixInvP() {
                 float4x4 flipZ = float4x4(1, 0, 0, 0,
                                         0, 1, 0, 0,
                                         0, 0, -1, 1,
@@ -93,9 +96,9 @@ Shader "Lereldarion/Overlay/Grid" {
                 m = mul(flipY, m);
                 m._24 *= _ProjectionParams.x;
                 m._42 *= -1;
-                return m;
+                unity_MatrixInvP = m;
+                unity_MatrixInvMVP = mul(unity_WorldToObject, mul(unity_MatrixInvV, unity_MatrixInvP));
             }
-            static float4x4 unity_MatrixInvP = make_unity_MatrixInvP();
 
             float3 position_vs_at_pixel(float2 pixel_position) {
                 // HLSLSupport.hlsl : DepthTexture is a TextureArray in SPS-I, so its size should be safe to use to get uvs.
@@ -115,6 +118,7 @@ Shader "Lereldarion/Overlay/Grid" {
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_TRANSFER_INSTANCE_ID(input, output);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
+                setup_unity_MatrixInvP();
 
                 #if defined(_OVERLAY_MODE_MESH)
                 const bool fullscreen = false;
@@ -151,6 +155,7 @@ Shader "Lereldarion/Overlay/Grid" {
             fixed4 fragment_stage (FragmentInput input) : SV_Target {
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
+                setup_unity_MatrixInvP();
 
                 const float3 position_ws = mul(unity_MatrixInvV, float4(position_vs_at_pixel(input.position.xy), 1)).xyz;
                 const float3 grid_pattern = bgolus_uv_01_grid(position_ws / _Grid_Size_Meters, _Grid_Line_Width_01);

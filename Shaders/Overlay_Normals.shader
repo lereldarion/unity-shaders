@@ -104,7 +104,10 @@ Shader "Lereldarion/Overlay/Normals" {
 
             // unity_MatrixInvP is not provided in BIRP. unity_CameraInvProjection is only the basic camera projection (no VR components).
             // Using d4rkpl4y3r technique of patching unity_CameraInvProjection (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
-            float4x4 make_unity_MatrixInvP() {
+            // Use after instance id have been set !
+            static float4x4 unity_MatrixInvP;
+            static float4x4 unity_MatrixInvMVP;
+            void setup_unity_MatrixInvP() {
                 float4x4 flipZ = float4x4(1, 0, 0, 0,
                                         0, 1, 0, 0,
                                         0, 0, -1, 1,
@@ -123,11 +126,9 @@ Shader "Lereldarion/Overlay/Normals" {
                 m = mul(flipY, m);
                 m._24 *= _ProjectionParams.x;
                 m._42 *= -1;
-                return m;
+                unity_MatrixInvP = m;
+                unity_MatrixInvMVP = mul(unity_WorldToObject, mul(unity_MatrixInvV, unity_MatrixInvP));
             }
-            static float4x4 unity_MatrixInvP = make_unity_MatrixInvP();
-
-            static float4x4 unity_MatrixInvMVP = mul(unity_WorldToObject, mul(unity_MatrixInvV, unity_MatrixInvP));
 
             float3 position_vs_at_pixel(float2 pixel_position) {
                 // HLSLSupport.hlsl : DepthTexture is a TextureArray in SPS-I, so its size should be safe to use to get uvs.
@@ -200,6 +201,7 @@ Shader "Lereldarion/Overlay/Normals" {
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_TRANSFER_INSTANCE_ID(input, output);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
+                setup_unity_MatrixInvP();
 
                 float2 disk_uv = 2 * input.uv0 - 1;
 
@@ -213,11 +215,11 @@ Shader "Lereldarion/Overlay/Normals" {
                 const float sphere_radius_os = sqrt(sphere_radius_sq_os);
                 output.sphere_radius_sq_os = sphere_radius_sq_os;
 
-                const bool fullscreen = sphere_intsersects_near_quad(float3(0, 0, 0), sphere_radius_sq_os);
-
                 const bool is_orthographic = UNITY_MATRIX_P._m33 == 1.0;
                 const float3 camera_forward_os = mul(unity_WorldToObject, mul(unity_MatrixInvV, float3(0, 0, -1)));
-                const float3 camera_pos_os = mul(unity_WorldToObject, float4(_WorldSpaceCameraPos, 1)).xyz;                
+                const float3 camera_pos_os = mul(unity_WorldToObject, float4(_WorldSpaceCameraPos, 1)).xyz;
+
+                const bool fullscreen = sphere_intsersects_near_quad(float3(0, 0, 0), sphere_radius_sq_os);
                 #endif
 
                 if(fullscreen) {
@@ -272,6 +274,7 @@ Shader "Lereldarion/Overlay/Normals" {
             void fragment_stage (FragmentInput input, out FragmentOutput output) {
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
+                setup_unity_MatrixInvP();
                 
                 #if defined(_OVERLAY_DISSOLVE_ENABLED)
                 if (border_pattern_discard(input.disk_uv)) { discard; }

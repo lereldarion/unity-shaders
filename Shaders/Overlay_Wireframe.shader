@@ -64,7 +64,10 @@ Shader "Lereldarion/Overlay/Wireframe" {
 
             // unity_MatrixInvP is not provided in BIRP. unity_CameraInvProjection is only the basic camera projection (no VR components).
             // Using d4rkpl4y3r technique of patching unity_CameraInvProjection (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
-            float4x4 make_unity_MatrixInvP() {
+            // Use after instance id have been set !
+            static float4x4 unity_MatrixInvP;
+            static float4x4 unity_MatrixInvMVP;
+            void setup_unity_MatrixInvP() {
                 float4x4 flipZ = float4x4(1, 0, 0, 0,
                                         0, 1, 0, 0,
                                         0, 0, -1, 1,
@@ -83,9 +86,9 @@ Shader "Lereldarion/Overlay/Wireframe" {
                 m = mul(flipY, m);
                 m._24 *= _ProjectionParams.x;
                 m._42 *= -1;
-                return m;
+                unity_MatrixInvP = m;
+                unity_MatrixInvMVP = mul(unity_WorldToObject, mul(unity_MatrixInvV, unity_MatrixInvP));
             }
-            static float4x4 unity_MatrixInvP = make_unity_MatrixInvP();
 
             float3 position_vs_at_pixel(float2 pixel_position) {
                 // HLSLSupport.hlsl : DepthTexture is a TextureArray in SPS-I, so its size should be safe to use to get uvs.
@@ -104,6 +107,7 @@ Shader "Lereldarion/Overlay/Wireframe" {
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_TRANSFER_INSTANCE_ID(input, output);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
+                setup_unity_MatrixInvP();
 
                 #if defined(_OVERLAY_MODE_MESH)
                 const bool fullscreen = false;
@@ -128,6 +132,7 @@ Shader "Lereldarion/Overlay/Wireframe" {
             fixed4 fragment_stage (FragmentInput input) : SV_Target {
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
+                setup_unity_MatrixInvP();
 
                 const float3 vs_0_0 = position_vs_at_pixel(input.position.xy);
                 const float3 vs_m_0 = position_vs_at_pixel(input.position.xy + float2(-1, 0));

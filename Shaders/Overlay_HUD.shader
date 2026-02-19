@@ -73,7 +73,10 @@ Shader "Lereldarion/Overlay/HUD" {
 
             // unity_MatrixInvP is not provided in BIRP. unity_CameraInvProjection is only the basic camera projection (no VR components).
             // Using d4rkpl4y3r technique of patching unity_CameraInvProjection (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
-            float4x4 make_unity_MatrixInvP() {
+            // Use after instance id have been set !
+            static float4x4 unity_MatrixInvP;
+            static float4x4 unity_MatrixInvMVP;
+            void setup_unity_MatrixInvP() {
                 float4x4 flipZ = float4x4(1, 0, 0, 0,
                                         0, 1, 0, 0,
                                         0, 0, -1, 1,
@@ -92,9 +95,9 @@ Shader "Lereldarion/Overlay/HUD" {
                 m = mul(flipY, m);
                 m._24 *= _ProjectionParams.x;
                 m._42 *= -1;
-                return m;
+                unity_MatrixInvP = m;
+                unity_MatrixInvMVP = mul(unity_WorldToObject, mul(unity_MatrixInvV, unity_MatrixInvP));
             }
-            static float4x4 unity_MatrixInvP = make_unity_MatrixInvP();
 
             // SDF anti-alias blend
             // https://blog.pkh.me/p/44-perfecting-anti-aliasing-on-signed-distance-functions.html
@@ -343,6 +346,7 @@ Shader "Lereldarion/Overlay/HUD" {
             void vertex_stage (VertexInput input, uint vertex_id : SV_VertexID, out FragmentInput output) {
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
+                setup_unity_MatrixInvP();
 
                 #if defined(_OVERLAY_MODE_MESH)
                 const bool fullscreen = false;
