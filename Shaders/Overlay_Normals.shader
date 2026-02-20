@@ -5,7 +5,7 @@
 //
 // Initial idea from https://github.com/netri/Neitri-Unity-Shaders
 // Using d4rkpl4y3r technique of patching unity_CameraInvProjection (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
-// Improved with SPS-I support, Fullscreen "screenspace" mode, billboard sphere mode, dissolve effect
+// Improved with SPS-I support, Fullscreen "screenspace" mode, billboard sphere mode, radial dissolve effect
 
 Shader "Lereldarion/Overlay/Normals" {
     Properties {
@@ -13,9 +13,9 @@ Shader "Lereldarion/Overlay/Normals" {
         [IntRange] _Overlay_Fullscreen_Vertex_Order("Fullscreen vertex order (mesh dependent)", Range(0, 2)) = 0
         [ToggleUI] _Overlay_Fullscreen_Only_Main_Camera("Fullscreen mode restricted to main camera", Float) = 1
         [Enum(Surface Only, 0, Filled, 1)] _Overlay_Sphere_Filled("Sphere type", Float) = 1
-        [Toggle(_OVERLAY_DISSOLVE_ENABLED)] _Overlay_Dissolve("Enable radial dissolve effect", Float) = 0
+        [Toggle(_OVERLAY_RADIAL_DISSOLVE_ENABLED)] _Overlay_Radial_Dissolve("Enable radial dissolve effect", Float) = 0
         _Overlay_Noise_Texture("Noise texture for dissolve", 2D) = "" {}
-        _Overlay_Radial_Dissolve("[0, 1] UV disk radial dissolve (radius start, end)", Vector) = (0.8, 1, 0, 0)
+        _Overlay_Radial_Dissolve_Bounds("Radial dissolve bounds (radius start, end)", Vector) = (0.8, 1, 0, 0)
     }
     SubShader {
         Tags {
@@ -39,7 +39,7 @@ Shader "Lereldarion/Overlay/Normals" {
             #pragma target 5.0
             #pragma multi_compile_instancing
             #pragma multi_compile _OVERLAY_MODE_MESH _OVERLAY_MODE_FULLSCREEN _OVERLAY_MODE_BILLBOARD_SPHERE
-            #pragma multi_compile __ _OVERLAY_DISSOLVE_ENABLED
+            #pragma multi_compile __ _OVERLAY_RADIAL_DISSOLVE_ENABLED
 
             #pragma vertex vertex_stage
             #pragma fragment fragment_stage
@@ -60,7 +60,7 @@ Shader "Lereldarion/Overlay/Normals" {
                 UNITY_VERTEX_INPUT_INSTANCE_ID
                 UNITY_VERTEX_OUTPUT_STEREO
 
-                #if defined(_OVERLAY_DISSOLVE_ENABLED)
+                #if defined(_OVERLAY_RADIAL_DISSOLVE_ENABLED)
                 float2 disk_uv : DISK_UV;
                 #endif
 
@@ -87,7 +87,7 @@ Shader "Lereldarion/Overlay/Normals" {
             uniform uint _Overlay_Fullscreen_Vertex_Order;
             uniform float _Overlay_Fullscreen_Only_Main_Camera;
             uniform float _Overlay_Sphere_Filled;
-            uniform float2 _Overlay_Radial_Dissolve;
+            uniform float2 _Overlay_Radial_Dissolve_Bounds;
 
             UNITY_DECLARE_TEX2D(_Overlay_Noise_Texture);
             uniform float4 _Overlay_Noise_Texture_ST;
@@ -150,7 +150,7 @@ Shader "Lereldarion/Overlay/Normals" {
                 return float3x3(billboard_x, billboard_y, billboard_normal);
             }
 
-            bool sphere_intsersects_near_quad(float3 center, float radius_sq) {
+            bool sphere_os_intersects_near_quad(float3 center, float radius_sq) {
                 // Near quad corners (object space)
                 float4 near_00 = mul(unity_MatrixInvMVP, float4(-1, -1, UNITY_NEAR_CLIP_VALUE, 1)); near_00.xyz /= near_00.w;
                 float4 near_10 = mul(unity_MatrixInvMVP, float4( 1, -1, UNITY_NEAR_CLIP_VALUE, 1)); near_10.xyz /= near_00.w;
@@ -169,8 +169,8 @@ Shader "Lereldarion/Overlay/Normals" {
                 return length_sq(projected_sphere_center - quad_center) <= projected_sphere_radius_sq + 2 * sqrt(projected_sphere_radius_sq * quad_radius_sq) + quad_radius_sq;
             }
 
-            // https://iquilezles.org/articles/intersectors/
             float2 ray_sphere_intersect(float3 origin, float3 ray_normalized, float3 sphere_center, float sphere_radius_sq) {
+                // https://iquilezles.org/articles/intersectors/
                 const float3 oc = origin - sphere_center;
                 const float b = dot(oc, ray_normalized);
                 const float c = dot(oc, oc) - sphere_radius_sq;
@@ -180,10 +180,9 @@ Shader "Lereldarion/Overlay/Normals" {
                 return float2(-b - h, -b + h);
             }
 
-            bool border_pattern_discard(float2 p) {
+            bool do_radial_discard(float2 p) {
                 const float radius = length(p);
-
-                const float transition = (radius - _Overlay_Radial_Dissolve.x) / (_Overlay_Radial_Dissolve.y - _Overlay_Radial_Dissolve.x);
+                const float transition = (radius - _Overlay_Radial_Dissolve_Bounds.x) / (_Overlay_Radial_Dissolve_Bounds.y - _Overlay_Radial_Dissolve_Bounds.x);
                 const float transition_clamped = saturate(transition);
                 if(transition != transition_clamped) { return transition > 0; } // Fully kept or discarded, do not sample noise.
                 const float threshold = transition_clamped * transition_clamped; // [0, 1] -> [0, 1], starts slow but fast end.
@@ -219,7 +218,7 @@ Shader "Lereldarion/Overlay/Normals" {
                 const float3 camera_forward_os = mul(unity_WorldToObject, mul(unity_MatrixInvV, float3(0, 0, -1)));
                 const float3 camera_pos_os = mul(unity_WorldToObject, float4(_WorldSpaceCameraPos, 1)).xyz;
 
-                const bool fullscreen = sphere_intsersects_near_quad(float3(0, 0, 0), sphere_radius_sq_os);
+                const bool fullscreen = sphere_os_intersects_near_quad(float3(0, 0, 0), sphere_radius_sq_os);
                 #endif
 
                 if(fullscreen) {
@@ -263,7 +262,7 @@ Shader "Lereldarion/Overlay/Normals" {
                     output.position = UnityObjectToClipPos(input.position_os);
                 }
 
-                #if defined(_OVERLAY_DISSOLVE_ENABLED)
+                #if defined(_OVERLAY_RADIAL_DISSOLVE_ENABLED)
                 output.disk_uv = disk_uv;
                 #endif
                 #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
@@ -276,8 +275,8 @@ Shader "Lereldarion/Overlay/Normals" {
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
                 setup_unity_MatrixInvP();
                 
-                #if defined(_OVERLAY_DISSOLVE_ENABLED)
-                if (border_pattern_discard(input.disk_uv)) { discard; }
+                #if defined(_OVERLAY_RADIAL_DISSOLVE_ENABLED)
+                if (do_radial_discard(input.disk_uv)) { discard; }
                 #endif
                 
                 #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)                
