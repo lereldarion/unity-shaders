@@ -40,11 +40,13 @@ Shader "Lereldarion/Overlay/Normals" {
             #pragma multi_compile_instancing
             #pragma multi_compile _OVERLAY_MODE_MESH _OVERLAY_MODE_FULLSCREEN _OVERLAY_MODE_BILLBOARD_SPHERE
             #pragma multi_compile __ _OVERLAY_RADIAL_DISSOLVE_ENABLED
+            #pragma instancing_options procedural:vertInstancingSetup
 
             #pragma vertex vertex_stage
             #pragma fragment fragment_stage
             
             #include "UnityCG.cginc"
+            #include "UnityStandardParticleInstancing.cginc"
 
             struct VertexInput {
                 float3 position_os : POSITION;
