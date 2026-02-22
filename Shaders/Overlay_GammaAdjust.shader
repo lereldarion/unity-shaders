@@ -79,7 +79,7 @@ Shader "Lereldarion/Overlay/GammaAdjust" {
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
                 setup_unity_birp_MatrixInvP();
 
-                output.position = overlay_vertex_clip_pos(output.overlay_extra, input.position_os, input.uv0, vertex_id);
+                output.position = OverlayObjectToClipPos(input.position_os, input.uv0, vertex_id, output.overlay_extra);
                 output.grab_screen_pos = ComputeGrabScreenPos(output.position);
                 output.gamma = exp(_Gamma_Adjust_Value); // exp(3 * (0.3 - _Gamma_Adjust_Value));
             }
@@ -89,7 +89,7 @@ Shader "Lereldarion/Overlay/GammaAdjust" {
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
                 setup_unity_birp_MatrixInvP();
 
-                overlay_fragment(output.overlay_extra, input.overlay_extra);
+                OverlayFragment(input.overlay_extra, output.overlay_extra);
 
                 const half4 scene_color = UNITY_SAMPLE_TEX2D_LOD(_GammaAdjustGrabTexture, input.grab_screen_pos.xy / input.grab_screen_pos.w, 0); // No mipmap as we take matching pixels
                 const half3 clamped_color = saturate(scene_color.rgb); // Avoid screen explosion at positive gamma + emission (>1) + bloom.

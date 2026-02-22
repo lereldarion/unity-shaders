@@ -126,7 +126,7 @@ bool sphere_os_intersects_near_quad(float3 center, float radius_sq) {
     return length_sq(projected_sphere_center - quad_center) <= projected_sphere_radius_sq + 2 * sqrt(projected_sphere_radius_sq * quad_radius_sq) + quad_radius_sq;
 }
 
-bool overlay_do_radial_discard(float2 disk_uv) {
+bool overlay_radial_dissolve_should_discard(float2 disk_uv) {
     // Radial dissolve pattern : returns true if discard is needed.
 
     const float radius = length(disk_uv);
@@ -144,7 +144,7 @@ bool overlay_do_radial_discard(float2 disk_uv) {
     return noise < threshold;
 }
 
-float4 overlay_vertex_clip_pos(out OverlayFragmentInputExtra output, float3 position_os, float2 uv0, uint vertex_id) {
+float4 OverlayObjectToClipPos(float3 position_os, float2 uv0, uint vertex_id, out OverlayFragmentInputExtra output) {
     // Computes the clip space position, and extra data, depending on overlay mode.
     float4 position_cs;
 
@@ -218,11 +218,11 @@ float4 overlay_vertex_clip_pos(out OverlayFragmentInputExtra output, float3 posi
     return position_cs;
 }
 
-void overlay_fragment(out OverlayFragmentOutputExtra output, OverlayFragmentInputExtra input) {
+void OverlayFragment(OverlayFragmentInputExtra input, out OverlayFragmentOutputExtra output) {
     // In fragment, discard and patch depth, depending on overlay mode
     
     #if defined(_OVERLAY_RADIAL_DISSOLVE_ENABLED)
-    if (overlay_do_radial_discard(input.disk_uv)) { discard; }
+    if (overlay_radial_dissolve_should_discard(input.disk_uv)) { discard; }
     #endif
     
     #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)                

@@ -94,7 +94,7 @@ Shader "Lereldarion/Overlay/Grid" {
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
                 setup_unity_birp_MatrixInvP();
 
-                output.position = overlay_vertex_clip_pos(output.overlay_extra, input.position_os, input.uv0, vertex_id);
+                output.position = OverlayObjectToClipPos(input.position_os, input.uv0, vertex_id, output.overlay_extra);
             }
             
             float3 bgolus_uv_01_grid(float3 uv, float line_width) {
@@ -114,7 +114,7 @@ Shader "Lereldarion/Overlay/Grid" {
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
                 setup_unity_birp_MatrixInvP();
 
-                overlay_fragment(output.overlay_extra, input.overlay_extra);
+                OverlayFragment(input.overlay_extra, output.overlay_extra);
 
                 const float3 position_ws = mul(unity_MatrixInvV, float4(position_vs_at_pixel(input.position.xy), 1)).xyz;
                 const float3 grid_pattern = bgolus_uv_01_grid(position_ws / _Grid_Size_Meters, _Grid_Line_Width_01);

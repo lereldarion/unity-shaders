@@ -87,7 +87,7 @@ Shader "Lereldarion/Overlay/Normals" {
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
                 setup_unity_birp_MatrixInvP();
 
-                output.position = overlay_vertex_clip_pos(output.overlay_extra, input.position_os, input.uv0, vertex_id);
+                output.position = OverlayObjectToClipPos(input.position_os, input.uv0, vertex_id, output.overlay_extra);
             }
 
             void fragment_stage (FragmentInput input, out FragmentOutput output) {
@@ -95,7 +95,7 @@ Shader "Lereldarion/Overlay/Normals" {
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
                 setup_unity_birp_MatrixInvP();
 
-                overlay_fragment(output.overlay_extra, input.overlay_extra);
+                OverlayFragment(input.overlay_extra, output.overlay_extra);
 
                 const float3 vs_0_0 = position_vs_at_pixel(input.position.xy);
                 const float3 vs_m_0 = position_vs_at_pixel(input.position.xy + float2(-1, 0));
