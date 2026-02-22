@@ -31,5 +31,6 @@ Material:
     - _Overlay_Fullscreen_Only_Main_Camera: 1
     - _Overlay_Fullscreen_Vertex_Order: 0
     - _Overlay_Mode: 0
+    - _Overlay_Sphere_Filled: 1
     m_Colors: []
   m_BuildTextureStacks: []

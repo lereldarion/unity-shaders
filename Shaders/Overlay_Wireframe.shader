@@ -4,14 +4,18 @@
 // An overlay which displays edges of triangles, from data sampled in the depth texture. Requires dynamic lighting to work (for the depth texture).
 //
 // Initial idea from https://github.com/netri/Neitri-Unity-Shaders
-// Improved with SPS-I support, Fullscreen "screenspace" mode.
 // Using d4rkpl4y3r technique of patching unity_CameraInvProjection (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
+// Improved with SPS-I support, Fullscreen "screenspace" mode, billboard sphere mode, radial dissolve effect
 
 Shader "Lereldarion/Overlay/Wireframe" {
     Properties {
-        [KeywordEnum(Mesh, Fullscreen)] _Overlay_Mode("Overlay mode", Float) = 0
+        [KeywordEnum(Mesh, Fullscreen, Billboard Sphere)] _Overlay_Mode("Overlay mode", Float) = 0
         [IntRange] _Overlay_Fullscreen_Vertex_Order("Fullscreen vertex order (mesh dependent)", Range(0, 2)) = 0
         [ToggleUI] _Overlay_Fullscreen_Only_Main_Camera("Fullscreen mode restricted to main camera", Float) = 1
+        [Enum(Surface Only, 0, Filled, 1)] _Overlay_Sphere_Filled("Sphere type", Float) = 1
+        [Toggle(_OVERLAY_RADIAL_DISSOLVE_ENABLED)] _Overlay_Radial_Dissolve("Enable radial dissolve effect", Float) = 0
+        _Overlay_Radial_Dissolve_Noise_Texture("Noise texture for dissolve", 2D) = "" {}
+        _Overlay_Radial_Dissolve_Bounds("Radial dissolve bounds (radius start, end)", Vector) = (0.8, 1, 0, 0)
     }
     SubShader {
         Tags {
@@ -20,6 +24,7 @@ Shader "Lereldarion/Overlay/Wireframe" {
             "VRCFallback" = "Hidden"
             "PreviewType" = "Plane"
             "IgnoreProjector" = "True"
+            "DisableBatching" = "True" // For Billboard sphere mode only
         }
         
         Cull Off
@@ -33,62 +38,35 @@ Shader "Lereldarion/Overlay/Wireframe" {
 
             #pragma target 5.0
             #pragma multi_compile_instancing
-            #pragma multi_compile _OVERLAY_MODE_MESH _OVERLAY_MODE_FULLSCREEN
+            #pragma multi_compile _OVERLAY_MODE_MESH _OVERLAY_MODE_FULLSCREEN _OVERLAY_MODE_BILLBOARD_SPHERE
+            #pragma multi_compile __ _OVERLAY_RADIAL_DISSOLVE_ENABLED
+            #pragma instancing_options procedural:vertInstancingSetup
 
             #pragma vertex vertex_stage
             #pragma fragment fragment_stage
             
             #include "UnityCG.cginc"
+            #include "UnityStandardParticleInstancing.cginc"
+            #include "common.hlsl"
 
             struct VertexInput {
-                float4 position_os : POSITION;
+                float3 position_os : POSITION;
+                float2 uv0 : TEXCOORD0;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
             struct FragmentInput {
-                float4 position : SV_POSITION;
+                sample float4 position : SV_POSITION; // Explicit interpolation modifier required here
                 UNITY_VERTEX_INPUT_INSTANCE_ID
                 UNITY_VERTEX_OUTPUT_STEREO
+                OverlayFragmentInputExtra overlay_extra;
             };
-
-            uniform float _Overlay_Mode;
-            uniform uint _Overlay_Fullscreen_Vertex_Order;
-            uniform float _Overlay_Fullscreen_Only_Main_Camera;
-
-            uniform float _VRChatMirrorMode;
-            uniform float _VRChatCameraMode;
+            struct FragmentOutput {
+                half4 color : SV_Target;
+                OverlayFragmentOutputExtra overlay_extra;
+            };
 
             UNITY_DECLARE_DEPTH_TEXTURE(_CameraDepthTexture);
             uniform float4 _CameraDepthTexture_TexelSize;
-
-            static const float nan = asfloat(uint(-1)); // 0xFFF...FFF should be a quiet NaN
-
-            // unity_MatrixInvP is not provided in BIRP. unity_CameraInvProjection is only the basic camera projection (no VR components).
-            // Using d4rkpl4y3r technique of patching unity_CameraInvProjection (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
-            // Use after instance id have been set !
-            static float4x4 unity_MatrixInvP;
-            static float4x4 unity_MatrixInvMVP;
-            void setup_unity_MatrixInvP() {
-                float4x4 flipZ = float4x4(1, 0, 0, 0,
-                                        0, 1, 0, 0,
-                                        0, 0, -1, 1,
-                                        0, 0, 0, 1);
-                float4x4 scaleZ = float4x4(1, 0, 0, 0,
-                                        0, 1, 0, 0,
-                                        0, 0, 2, -1,
-                                        0, 0, 0, 1);
-                float4x4 invP = unity_CameraInvProjection;
-                float4x4 flipY = float4x4(1, 0, 0, 0,
-                                        0, _ProjectionParams.x, 0, 0,
-                                        0, 0, 1, 0,
-                                        0, 0, 0, 1);
-                float4x4 m = mul(scaleZ, flipZ);
-                m = mul(invP, m);
-                m = mul(flipY, m);
-                m._24 *= _ProjectionParams.x;
-                m._42 *= -1;
-                unity_MatrixInvP = m;
-                unity_MatrixInvMVP = mul(unity_WorldToObject, mul(unity_MatrixInvV, unity_MatrixInvP));
-            }
 
             float3 position_vs_at_pixel(float2 pixel_position) {
                 // HLSLSupport.hlsl : DepthTexture is a TextureArray in SPS-I, so its size should be safe to use to get uvs.
@@ -99,40 +77,25 @@ Shader "Lereldarion/Overlay/Wireframe" {
                 #ifdef UNITY_SINGLE_PASS_STEREO
                     clipPos.x -= 2 * unity_StereoEyeIndex;
                 #endif
-                float4 v = mul(unity_MatrixInvP, float4(clipPos, raw, 1));
+                float4 v = mul(unity_birp_MatrixInvP, float4(clipPos, raw, 1));
                 return v.xyz / v.w;
             }
-            
+
             void vertex_stage (VertexInput input, uint vertex_id : SV_VertexID, out FragmentInput output) {
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_TRANSFER_INSTANCE_ID(input, output);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
-                setup_unity_MatrixInvP();
+                setup_unity_birp_MatrixInvP();
 
-                #if defined(_OVERLAY_MODE_MESH)
-                const bool fullscreen = false;
-                #elif defined(_OVERLAY_MODE_FULLSCREEN)
-                const bool fullscreen = _VRChatMirrorMode == 0 && _VRChatCameraMode * _Overlay_Fullscreen_Only_Main_Camera == 0;
-                #endif
-
-                if(fullscreen) {
-                    // Fullscreen mode : cover the screen with a quad by redirecting existing vertices
-                    if(vertex_id < 4) {
-                        const float2 ndc = vertex_id & uint2(2, 1) ? 1 : -1; // [(-1, -1), (-1, 1), (1, -1), (1, 1)]
-                        const float2 swap = _Overlay_Fullscreen_Vertex_Order & (vertex_id & uint2(1, 2)) ? -1 : 1;
-                        output.position = float4(ndc * swap, UNITY_NEAR_CLIP_VALUE, 1);
-                    } else {
-                        output.position = nan.xxxx; // Vertex discard
-                    }
-                } else {
-                    output.position = UnityObjectToClipPos(input.position_os);
-                }
+                output.position = overlay_vertex_clip_pos(output.overlay_extra, input.position_os, input.uv0, vertex_id);
             }
 
-            fixed4 fragment_stage (FragmentInput input) : SV_Target {
+            void fragment_stage (FragmentInput input, out FragmentOutput output) {
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
-                setup_unity_MatrixInvP();
+                setup_unity_birp_MatrixInvP();
+
+                overlay_fragment(output.overlay_extra, input.overlay_extra);
 
                 const float3 vs_0_0 = position_vs_at_pixel(input.position.xy);
                 const float3 vs_m_0 = position_vs_at_pixel(input.position.xy + float2(-1, 0));
@@ -148,8 +111,7 @@ Shader "Lereldarion/Overlay/Wireframe" {
                 // Highlight differences in normals. Does not need WS for that.
                 const float3 o = 1;
                 const float sum_normal_differences = dot(o, abs(normal_vs_p_p - normal_vs_m_p)) + dot(o, abs(normal_vs_p_m - normal_vs_m_p));
-                const float c = saturate(sum_normal_differences);
-                return float4(c.xxx, 1);
+                output.color = half4(saturate(sum_normal_differences).xxx, 1);
             }
             ENDCG
         }

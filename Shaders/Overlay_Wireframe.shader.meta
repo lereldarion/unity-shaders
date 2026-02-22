@@ -2,7 +2,9 @@ fileFormatVersion: 2
 guid: d3ab93cb7567be04093abc27fe32cda1
 ShaderImporter:
   externalObjects: {}
-  defaultTextures: []
+  defaultTextures:
+  - _Overlay_Radial_Dissolve_Noise_Texture: {fileID: 2800000, guid: a3815c9c3819489408747f0b3583c300,
+      type: 3}
   nonModifiableTextures: []
   userData: 
   assetBundleName: 

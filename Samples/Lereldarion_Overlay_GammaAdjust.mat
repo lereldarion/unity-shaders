@@ -23,13 +23,20 @@ Material:
   m_LockedProperties: 
   m_SavedProperties:
     serializedVersion: 3
-    m_TexEnvs: []
+    m_TexEnvs:
+    - _Overlay_Radial_Dissolve_Noise_Texture:
+        m_Texture: {fileID: 2800000, guid: a3815c9c3819489408747f0b3583c300, type: 3}
+        m_Scale: {x: 5, y: 1}
+        m_Offset: {x: 0.01, y: -0.05}
     m_Ints: []
     m_Floats:
     - _Gamma_Adjust_Value: 0
     - _Overlay_Fullscreen_Only_Main_Camera: 1
     - _Overlay_Fullscreen_Vertex_Order: 0
     - _Overlay_Mode: 0
+    - _Overlay_Radial_Dissolve: 0
+    - _Overlay_Sphere_Filled: 1
     - _Transmit_Emission: 1
-    m_Colors: []
+    m_Colors:
+    - _Overlay_Radial_Dissolve_Bounds: {r: 0.8, g: 1, b: 0, a: 0}
   m_BuildTextureStacks: []

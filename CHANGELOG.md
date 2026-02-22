@@ -2,12 +2,11 @@
 
 ## [Unreleased]
 - HUD : improve UI layout and provide size configuration. Use asin to reduce compass angle errors.
-- Overlays : replace `_Overlay_Fullscreen` boolean by `_Overlay_Mode` enum.
+- Overlays : replace `_Overlay_Fullscreen` boolean by `_Overlay_Mode` enum. Now supports 3 modes : mesh surface, fullscreen, and billboard fake sphere. Billboard sphere simulate a sphere from a flat surface with uvs (like unity quad).
 - Overlays : Improved the vertex order fix (slider, 3 options).
 - Depth overlays : fix matrix P computation with material instancing
-- WIP add to others overlays
-  - Depth overlays : add radial dissolve effect for mesh and billboard sphere mode.
-  - Added billboard sphere mode : fake a sphere from a flat surface with uvs (like unity quad).
+- Overlays : Support for particle system mesh instanced mode.
+- Normals / Wireframe / Gamma : add radial dissolve effect. Only looks good on overlays that fill the screen, to make a nice border transition.
 
 ## 1.4.1 - 08/02/2026
 - Grid : remove broken grid for infnite distance (skybox)
