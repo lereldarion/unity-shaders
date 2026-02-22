@@ -170,14 +170,17 @@ float4 OverlayObjectToClipPos(float3 position_os, float2 uv0, uint vertex_id, ou
     if(fullscreen) {
         // Fullscreen mode : cover the screen with a quad by redirecting existing vertices
         if(vertex_id < 4) {
-            const float2 ndc = vertex_id & uint2(2, 1) ? 1 : -1; // [(-1, -1), (-1, 1), (1, -1), (1, 1)]
-            const float2 swap = _Overlay_Fullscreen_Vertex_Order & (vertex_id & uint2(1, 2)) ? -1 : 1;
+            const uint2 bits = vertex_id & uint2(2, 1); // [00, 01, 10, 11]
+            const float2 ndc = bits ? 1 : -1; // [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+            const float2 swap = _Overlay_Fullscreen_Vertex_Order & bits.yx ? -1 : 1;
             position_cs = float4(ndc * swap, UNITY_NEAR_CLIP_VALUE, 1);
-            disk_uv = 0; // Fullscreen FIXME
-
+            
             #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
             float4 v = mul(unity_birp_MatrixInvMVP, position_cs);
             output.position_os = v.xyz / v.w;
+            disk_uv = 0; // Fullscreen inside sphere
+            #else
+            disk_uv = position_cs.xy * rsqrt(2); // Fullscreen radial dissolve
             #endif
         } else {
             position_cs = f32_nan.xxxx; // Vertex discard
