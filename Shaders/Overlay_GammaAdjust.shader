@@ -39,8 +39,8 @@ Shader "Lereldarion/Overlay/GammaAdjust" {
             CGPROGRAM
             #pragma target 5.0
             #pragma multi_compile_instancing
-            #pragma multi_compile _OVERLAY_MODE_MESH _OVERLAY_MODE_FULLSCREEN _OVERLAY_MODE_BILLBOARD_SPHERE
-            #pragma multi_compile __ _OVERLAY_RADIAL_DISSOLVE_ENABLED
+            #pragma shader_feature_local _OVERLAY_MODE_MESH _OVERLAY_MODE_FULLSCREEN _OVERLAY_MODE_BILLBOARD_SPHERE
+            #pragma shader_feature_local __ _OVERLAY_RADIAL_DISSOLVE_ENABLED
             #pragma instancing_options procedural:vertInstancingSetup
 
             #pragma vertex vertex_stage

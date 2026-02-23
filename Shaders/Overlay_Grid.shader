@@ -42,7 +42,7 @@ Shader "Lereldarion/Overlay/Grid" {
 
             #pragma target 5.0
             #pragma multi_compile_instancing
-            #pragma multi_compile _OVERLAY_MODE_MESH _OVERLAY_MODE_FULLSCREEN _OVERLAY_MODE_BILLBOARD_SPHERE
+            #pragma shader_feature_local _OVERLAY_MODE_MESH _OVERLAY_MODE_FULLSCREEN _OVERLAY_MODE_BILLBOARD_SPHERE
             #pragma instancing_options procedural:vertInstancingSetup
 
             #pragma vertex vertex_stage
