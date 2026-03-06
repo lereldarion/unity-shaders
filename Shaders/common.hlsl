@@ -5,6 +5,9 @@ static const float f32_nan = asfloat(uint(-1)); // 0xFFF...FFF should be a quiet
 
 float length_sq(float3 v) { return dot(v, v); }
 float length_sq(float2 v) { return dot(v, v); }
+float2 pow2(float2 v) { return v * v; }
+float round_to_scale(float v, float scale) { return scale * round(v / scale); }
+float glsl_mod(float x, float y) { return x - y * floor(x / y); }
 
 float3x3 billboard_referential(float3 billboard_normal, float3 up) {
     billboard_normal = normalize(billboard_normal);
@@ -145,7 +148,7 @@ bool overlay_radial_dissolve_should_discard(float2 disk_uv) {
     return noise < threshold;
 }
 
-float4 OverlayObjectToClipPos(float3 position_os, float2 uv0, uint vertex_id, out OverlayFragmentInputExtra output) {
+float4 OverlayObjectToClipPos(float3 position_os, float2 uv0, uint vertex_id, out OverlayFragmentInputExtra output, out bool fullscreen) {
     // Computes the clip space position, and extra data, depending on overlay mode.
     float4 position_cs;
 
@@ -153,9 +156,9 @@ float4 OverlayObjectToClipPos(float3 position_os, float2 uv0, uint vertex_id, ou
 
     // Determine if we need fullscreen fragment
     #if defined(_OVERLAY_MODE_MESH)
-    const bool fullscreen = false;
+    fullscreen = false;
     #elif defined(_OVERLAY_MODE_FULLSCREEN)
-    const bool fullscreen = _Overlay_Fullscreen_Enable && _VRChatMirrorMode == 0 && _VRChatCameraMode * _Overlay_Fullscreen_Only_Main_Camera == 0;
+    fullscreen = _Overlay_Fullscreen_Enable && _VRChatMirrorMode == 0 && _VRChatCameraMode * _Overlay_Fullscreen_Only_Main_Camera == 0;
     #elif defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
     const float sphere_radius_sq_os = length_sq(position_os) / max(length_sq(disk_uv), 1e-6);
     const float sphere_radius_os = sqrt(sphere_radius_sq_os);
@@ -165,7 +168,7 @@ float4 OverlayObjectToClipPos(float3 position_os, float2 uv0, uint vertex_id, ou
     const float3 camera_forward_os = mul(unity_WorldToObject, mul(unity_MatrixInvV, float3(0, 0, -1)));
     const float3 camera_pos_os = mul(unity_WorldToObject, float4(_WorldSpaceCameraPos, 1)).xyz;
 
-    const bool fullscreen = sphere_os_intersects_near_quad(float3(0, 0, 0), sphere_radius_sq_os);
+    fullscreen = sphere_os_intersects_near_quad(float3(0, 0, 0), sphere_radius_sq_os);
     #endif
 
     if(fullscreen) {
@@ -220,6 +223,10 @@ float4 OverlayObjectToClipPos(float3 position_os, float2 uv0, uint vertex_id, ou
     #endif
 
     return position_cs;
+}
+float4 OverlayObjectToClipPos(float3 position_os, float2 uv0, uint vertex_id, out OverlayFragmentInputExtra output) {
+    bool dummy;
+    return OverlayObjectToClipPos(position_os, uv0, vertex_id, output, dummy);
 }
 
 void OverlayFragment(OverlayFragmentInputExtra input, out OverlayFragmentOutputExtra output) {

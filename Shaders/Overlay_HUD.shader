@@ -11,9 +11,11 @@ Shader "Lereldarion/Overlay/HUD" {
         [HideInInspector] _MSDF_Glyph_Atlas ("MSDF glyph texture", 2D) = "" {}
 
         [Header(Overlay)]
-        [KeywordEnum(Mesh, Fullscreen)] _Overlay_Mode("Overlay mode", Float) = 0
+        [KeywordEnum(Mesh, Fullscreen, Billboard Sphere)] _Overlay_Mode("Overlay mode", Float) = 0
         [IntRange] _Overlay_Fullscreen_Vertex_Order("Fullscreen vertex order (mesh dependent)", Range(0, 2)) = 0
-        [ToggleUI] _Overlay_Fullscreen_Only_Main_Camera("Fullscreen mode restricted to main camera", Float) = 1
+        [ToggleUI] _Overlay_Fullscreen_Enable("Fullscreen mode : dynamic toggle", Float) = 1
+        [ToggleUI] _Overlay_Fullscreen_Only_Main_Camera("Fullscreen mode : restricted to main camera", Float) = 1
+        [Enum(Surface Only, 0, Filled, 1)] _Overlay_Sphere_Filled("Sphere type", Float) = 1
     }
     SubShader {
         Tags {
@@ -22,6 +24,7 @@ Shader "Lereldarion/Overlay/HUD" {
             "VRCFallback" = "Hidden"
             "PreviewType" = "Plane"
             "IgnoreProjector" = "True"
+            "DisableBatching" = "True" // For Billboard sphere mode only
         }
         
         Cull Off
@@ -36,25 +39,21 @@ Shader "Lereldarion/Overlay/HUD" {
 
             #pragma target 5.0
             #pragma multi_compile_instancing
-            #pragma multi_compile _OVERLAY_MODE_MESH _OVERLAY_MODE_FULLSCREEN
+            #pragma shader_feature_local _OVERLAY_MODE_MESH _OVERLAY_MODE_FULLSCREEN _OVERLAY_MODE_BILLBOARD_SPHERE
+            #pragma instancing_options procedural:vertInstancingSetup
 
             #pragma vertex vertex_stage
             #pragma fragment fragment_stage
             
             #include "UnityCG.cginc"
+            #include "UnityStandardParticleInstancing.cginc"
+            #include "common.hlsl"
 
             uniform fixed4 _Color;
             uniform float _UI_Position_Radius;
             uniform float _Font_Size;
 
-            uniform float _Overlay_Mode;
-            uniform uint _Overlay_Fullscreen_Vertex_Order;
-            uniform float _Overlay_Fullscreen_Only_Main_Camera;
-
             UNITY_DECLARE_TEX2D(_MSDF_Glyph_Atlas);
-
-            uniform float _VRChatMirrorMode;
-            uniform float _VRChatCameraMode;
 
             static const float _UI_Thickness = 0.001;
             static const float _Crosshair_Circle_Radius = 0.03;
@@ -62,42 +61,6 @@ Shader "Lereldarion/Overlay/HUD" {
             static const float _Compass_Tick_Length = 0.01;
 
             UNITY_DECLARE_DEPTH_TEXTURE(_CameraDepthTexture);
-
-            // Utils
-            float2 pow2(float2 v) { return v * v; }
-            float round_to_scale(float v, float scale) { return scale * round(v / scale); }
-            float glsl_mod(float x, float y) { return x - y * floor(x / y); }
-            static const float nan = asfloat(uint(-1)); // 0xFFF...FFF should be a quiet NaN
-            static const float pi = UNITY_PI;
-            static const float one_deg_rad = pi / 180;
-
-            // unity_MatrixInvP is not provided in BIRP. unity_CameraInvProjection is only the basic camera projection (no VR components).
-            // Using d4rkpl4y3r technique of patching unity_CameraInvProjection (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
-            // Use after instance id have been set !
-            static float4x4 unity_MatrixInvP;
-            static float4x4 unity_MatrixInvMVP;
-            void setup_unity_MatrixInvP() {
-                float4x4 flipZ = float4x4(1, 0, 0, 0,
-                                        0, 1, 0, 0,
-                                        0, 0, -1, 1,
-                                        0, 0, 0, 1);
-                float4x4 scaleZ = float4x4(1, 0, 0, 0,
-                                        0, 1, 0, 0,
-                                        0, 0, 2, -1,
-                                        0, 0, 0, 1);
-                float4x4 invP = unity_CameraInvProjection;
-                float4x4 flipY = float4x4(1, 0, 0, 0,
-                                        0, _ProjectionParams.x, 0, 0,
-                                        0, 0, 1, 0,
-                                        0, 0, 0, 1);
-                float4x4 m = mul(scaleZ, flipZ);
-                m = mul(invP, m);
-                m = mul(flipY, m);
-                m._24 *= _ProjectionParams.x;
-                m._42 *= -1;
-                unity_MatrixInvP = m;
-                unity_MatrixInvMVP = mul(unity_WorldToObject, mul(unity_MatrixInvV, unity_MatrixInvP));
-            }
 
             // SDF anti-alias blend
             // https://blog.pkh.me/p/44-perfecting-anti-aliasing-on-signed-distance-functions.html
@@ -237,39 +200,39 @@ Shader "Lereldarion/Overlay/HUD" {
                 nointerpolation float azimuth_radiants : AZIMUTH;
                 nointerpolation float elevation_radiants : ELEVATION;
 
-                static HudData compute(float3 forward_normal_ws) {
+                static HudData compute(float3 reticle_forward_ws) {
                     HudData hd;
 
                     // Axis of polar-like coordinate, aligned to world up
                     const float3 up_direction_ws = float3(0, 1, 0);
-                    const float3 horizontal_tangent = normalize(cross(forward_normal_ws, up_direction_ws));
+                    const float3 horizontal_tangent = normalize(cross(reticle_forward_ws, up_direction_ws));
                     hd.polar_x_ws = horizontal_tangent * -1 /* needed but not sure why ; ht should go to the right */;
-                    hd.polar_y_ws = cross(horizontal_tangent, forward_normal_ws);
+                    hd.polar_y_ws = cross(horizontal_tangent, reticle_forward_ws);
 
                     // World azimuth and elevation of the surface forward normal
                     const float3 east_ws = float3(1, 0, 0);
                     const float3 north_ws = float3(0, 0, 1);
                     const float angular_dist_to_north_0_pi = acos(dot(horizontal_tangent, east_ws));
-                    hd.azimuth_radiants = pi - angular_dist_to_north_0_pi * sign(dot(horizontal_tangent, north_ws)); // 0 at north, pi/2 east, pi south, 3pi/2 west
-                    const float angular_dist_to_up_0_pi = acos(dot(forward_normal_ws, up_direction_ws));
-                    hd.elevation_radiants = pi/2 - angular_dist_to_up_0_pi; // -pi/2 when looking at the bottom, pi/2 at the top
+                    hd.azimuth_radiants = UNITY_PI - angular_dist_to_north_0_pi * sign(dot(horizontal_tangent, north_ws)); // 0 at north, pi/2 east, pi south, 3pi/2 west
+                    const float angular_dist_to_up_0_pi = acos(dot(reticle_forward_ws, up_direction_ws));
+                    hd.elevation_radiants = UNITY_PI / 2 - angular_dist_to_up_0_pi; // -pi/2 when looking at the bottom, pi/2 at the top
 
                     // Compute depth from the depth texture.
                     // Sample at the crosshair center, which means aligned with the normal of the quad.
                     // Always use data from the first eye to have matching ranges between eyes.
-                    #if UNITY_SINGLE_PASS_STEREO
-                    const float3 camera_pos_ws = unity_StereoWorldSpaceCameraPos[0];
-                    const float4x4 matrix_vp = unity_StereoMatrixVP[0];
+                    #if defined(UNITY_SINGLE_PASS_STEREO)
+                        const float3 camera_pos_ws = unity_StereoWorldSpaceCameraPos[0];
+                        const float4x4 matrix_vp = unity_StereoMatrixVP[0];
                     #else
-                    const float3 camera_pos_ws = _WorldSpaceCameraPos;
-                    const float4x4 matrix_vp = UNITY_MATRIX_VP;
+                        const float3 camera_pos_ws = _WorldSpaceCameraPos;
+                        const float4x4 matrix_vp = UNITY_MATRIX_VP;
                     #endif
-                    const float3 sample_point_ws = camera_pos_ws + forward_normal_ws;
+                    const float3 sample_point_ws = camera_pos_ws + reticle_forward_ws;
                     const float4 sample_point_cs = mul(matrix_vp, float4(sample_point_ws, 1)); // UnityWorldToClipPos()
                     float4 screen_pos = ComputeNonStereoScreenPos(sample_point_cs);
-                    #if UNITY_SINGLE_PASS_STEREO
-                    // o.xy = TransformStereoScreenSpaceTex(o.xy, pos.w);
-                    screen_pos.xy = screen_pos.xy * unity_StereoScaleOffset[0].xy + unity_StereoScaleOffset[0].zw * screen_pos.w;
+                    #if defined(UNITY_SINGLE_PASS_STEREO)
+                        // o.xy = TransformStereoScreenSpaceTex(o.xy, pos.w);
+                        screen_pos.xy = screen_pos.xy * unity_StereoScaleOffset[0].xy + unity_StereoScaleOffset[0].zw * screen_pos.w;
                     #endif
                     const float depth_texture_value = SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(screen_pos.xy / screen_pos.w, 0, 4 /* mipmap level = average a little bit */));
                     const float range_ws = LinearEyeDepth(depth_texture_value) / sample_point_cs.w; // Cannot detect presence of Depth texture, this may be garbage.
@@ -332,61 +295,62 @@ Shader "Lereldarion/Overlay/HUD" {
             ////////////////////////////////////////////////////////////////////////////////////
 
             struct VertexInput {
-                float4 position_os : POSITION;
+                float3 position_os : POSITION;
                 float3 normal_os : NORMAL;
+                float2 uv0 : TEXCOORD0;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
             struct FragmentInput {
                 float4 position : SV_POSITION;
                 float3 ray_ws : RAY_WS;
                 HudData hud_data;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
                 UNITY_VERTEX_OUTPUT_STEREO
+                OverlayFragmentInputExtra overlay_extra;
+            };
+            struct FragmentOutput {
+                half4 color : SV_Target;
+                OverlayFragmentOutputExtra overlay_extra;
             };
 
             void vertex_stage (VertexInput input, uint vertex_id : SV_VertexID, out FragmentInput output) {
                 UNITY_SETUP_INSTANCE_ID(input);
+                UNITY_TRANSFER_INSTANCE_ID(input, output);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
-                setup_unity_MatrixInvP();
+                setup_unity_birp_MatrixInvP();
 
-                #if defined(_OVERLAY_MODE_MESH)
-                const bool fullscreen = false;
-                #elif defined(_OVERLAY_MODE_FULLSCREEN)
-                const bool fullscreen = _VRChatMirrorMode == 0 && _VRChatCameraMode * _Overlay_Fullscreen_Only_Main_Camera == 0;
-                #endif
+                bool fullscreen;
+                output.position = OverlayObjectToClipPos(input.position_os, input.uv0, vertex_id, output.overlay_extra, fullscreen);
 
-                float3 forward_normal_ws;
-                bool compute_hud_data = true;
-
+                float3 reticle_forward_ws;
                 if(fullscreen) {
-                    // Fullscreen mode : cover the screen with a quad by redirecting existing vertices
-                    if(vertex_id < 4) {
-                        const float2 ndc = vertex_id & uint2(2, 1) ? 1 : -1; // [(-1, -1), (-1, 1), (1, -1), (1, 1)]
-                        const float2 swap = _Overlay_Fullscreen_Vertex_Order & (vertex_id & uint2(1, 2)) ? -1 : 1;
-                        output.position = float4(ndc * swap, UNITY_NEAR_CLIP_VALUE, 1);
+                    const float4 position_vs = mul(unity_birp_MatrixInvP, output.position);
+                    output.ray_ws = mul(unity_MatrixInvV, position_vs.xyz / position_vs.w);
 
-                        const float3 forward_vs = float3(0, 0, -1);
-                        const float4 position_vs = mul(unity_MatrixInvP, output.position);
-                        output.ray_ws = mul(unity_MatrixInvV, position_vs.xyz / position_vs.w);
-                        forward_normal_ws = normalize(mul(unity_MatrixInvV, forward_vs));
-                    } else {
-                        output.position = nan.xxxx; // Vertex discard
-                        output.ray_ws = 0;
-                        forward_normal_ws = 0;
-                        compute_hud_data = false;
-                    }
+                    const float3 forward_vs = float3(0, 0, -1);
+                    #if defined(UNITY_SINGLE_PASS_STEREO)
+                    reticle_forward_ws = normalize(mul(unity_StereoMatrixInvV[0], forward_vs) + mul(unity_StereoMatrixInvV[1], forward_vs));
+                    #else
+                    reticle_forward_ws = normalize(mul(unity_MatrixInvV, forward_vs));
+                    #endif
                 } else {
-                    const float3 position_ws = mul(unity_ObjectToWorld, float4(input.position_os.xyz, 1)).xyz;
-                    output.position = UnityWorldToClipPos(position_ws);
-                    output.ray_ws = position_ws - _WorldSpaceCameraPos;
-                    const float3 normal_ws = UnityObjectToWorldNormal(input.normal_os);
-                    forward_normal_ws = dot(normal_ws, output.ray_ws) >= 0 ? normal_ws : -normal_ws;
+                    #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
+                        output.ray_ws = mul(unity_ObjectToWorld, float4(output.overlay_extra.position_os, 1)).xyz - _WorldSpaceCameraPos;
+                        // FIXME smooth transition from view to flat with non uniform scale
+                        #if defined(UNITY_SINGLE_PASS_STEREO)
+                        const float3 camera_pos_ws = unity_StereoWorldSpaceCameraPos[0];
+                        #else
+                        const float3 camera_pos_ws = _WorldSpaceCameraPos;
+                        #endif
+                        reticle_forward_ws = normalize(mul(unity_ObjectToWorld, float4(0, 0, 0, 1)).xyz - camera_pos_ws);
+                    #else
+                        output.ray_ws = mul(unity_ObjectToWorld, float4(input.position_os, 1)).xyz - _WorldSpaceCameraPos;
+                        const float3 normal_ws = UnityObjectToWorldNormal(input.normal_os);
+                        reticle_forward_ws = dot(normal_ws, output.ray_ws) >= 0 ? normal_ws : -normal_ws;
+                    #endif
                 }
 
-                if(compute_hud_data) {
-                    output.hud_data = HudData::compute(forward_normal_ws);
-                } else {
-                    output.hud_data = (HudData) 0;
-                }
+                output.hud_data = HudData::compute(reticle_forward_ws);
             }
 
             ////////////////////////////////////////////////////////////////////////////////////
@@ -404,6 +368,7 @@ Shader "Lereldarion/Overlay/HUD" {
 
             ////////////////////////////////////////////////////////////////////////////////////
             // Compass
+            static const float one_deg_rad = UNITY_PI / 180;
 
             float sdf_elevation(float2 p, float elevation_at_0, inout Font font) {
                 // polar angle from normal, in radiants
@@ -448,9 +413,13 @@ Shader "Lereldarion/Overlay/HUD" {
 
             ////////////////////////////////////////////////////////////////////////////////////
 
-            fixed4 fragment_stage (FragmentInput input) : SV_Target {
+            void fragment_stage (FragmentInput input, out FragmentOutput output) {
+                UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
-                
+                setup_unity_birp_MatrixInvP();
+
+                OverlayFragment(input.overlay_extra, output.overlay_extra);
+
                 // We want polar (angle) coordinates with x/y aligned with normal and world up.
                 // We want a measure of angle to view dir, with sin angle to view dir = cos angle to these plane vectors.
                 // This is not linear, but linear enough around the normal, and with a pleasing round deformation.
@@ -468,9 +437,8 @@ Shader "Lereldarion/Overlay/HUD" {
 
                 // Combine both sdfs
                 const float sd = min(ui_sd - _UI_Thickness, font.sdf());                
-                return _Color * sdf_blend_with_aa(sd, polar_screen_scale);
+                output.color = _Color * sdf_blend_with_aa(sd, polar_screen_scale);
             }
-
             ENDCG
         }
     }
