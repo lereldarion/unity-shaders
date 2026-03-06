@@ -11,7 +11,8 @@ Shader "Lereldarion/Overlay/Wireframe" {
     Properties {
         [KeywordEnum(Mesh, Fullscreen, Billboard Sphere)] _Overlay_Mode("Overlay mode", Float) = 0
         [IntRange] _Overlay_Fullscreen_Vertex_Order("Fullscreen vertex order (mesh dependent)", Range(0, 2)) = 0
-        [ToggleUI] _Overlay_Fullscreen_Only_Main_Camera("Fullscreen mode restricted to main camera", Float) = 1
+        [ToggleUI] _Overlay_Fullscreen_Enable("Fullscreen mode : dynamic toggle", Float) = 1
+        [ToggleUI] _Overlay_Fullscreen_Only_Main_Camera("Fullscreen mode : restricted to main camera", Float) = 1
         [Enum(Surface Only, 0, Filled, 1)] _Overlay_Sphere_Filled("Sphere type", Float) = 1
         [Toggle(_OVERLAY_RADIAL_DISSOLVE_ENABLED)] _Overlay_Radial_Dissolve("Enable radial dissolve effect", Float) = 0
         _Overlay_Radial_Dissolve_Noise_Texture("Noise texture for dissolve", 2D) = "" {}

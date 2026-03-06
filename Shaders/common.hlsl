@@ -72,6 +72,7 @@ void setup_unity_birp_MatrixInvP() {
 // - call the overlay_vertex_clip_pos() in vertex and overlay_fragment() in fragment 
 
 uniform uint _Overlay_Fullscreen_Vertex_Order;
+uniform float _Overlay_Fullscreen_Enable;
 uniform float _Overlay_Fullscreen_Only_Main_Camera;
 uniform float _Overlay_Sphere_Filled;
 uniform float2 _Overlay_Radial_Dissolve_Bounds;
@@ -154,7 +155,7 @@ float4 OverlayObjectToClipPos(float3 position_os, float2 uv0, uint vertex_id, ou
     #if defined(_OVERLAY_MODE_MESH)
     const bool fullscreen = false;
     #elif defined(_OVERLAY_MODE_FULLSCREEN)
-    const bool fullscreen = _VRChatMirrorMode == 0 && _VRChatCameraMode * _Overlay_Fullscreen_Only_Main_Camera == 0;
+    const bool fullscreen = _Overlay_Fullscreen_Enable && _VRChatMirrorMode == 0 && _VRChatCameraMode * _Overlay_Fullscreen_Only_Main_Camera == 0;
     #elif defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
     const float sphere_radius_sq_os = length_sq(position_os) / max(length_sq(disk_uv), 1e-6);
     const float sphere_radius_os = sqrt(sphere_radius_sq_os);
