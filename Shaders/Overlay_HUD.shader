@@ -336,15 +336,22 @@ Shader "Lereldarion/Overlay/HUD" {
                 } else {
                     #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
                         output.ray_ws = mul(unity_ObjectToWorld, float4(output.overlay_extra.position_os, 1)).xyz - _WorldSpaceCameraPos;
-                        // FIXME smooth transition from view to flat with non uniform scale
+
+                        // Smooth transition from view to flat with non uniform scale.
+                        // Make a billboard referential in OS, apply scale for XY and recompute Z as cross.
                         #if defined(UNITY_SINGLE_PASS_STEREO)
                         const float3 camera_pos_ws = unity_StereoWorldSpaceCameraPos[0];
                         #else
                         const float3 camera_pos_ws = _WorldSpaceCameraPos;
                         #endif
-                        reticle_forward_ws = normalize(mul(unity_ObjectToWorld, float4(0, 0, 0, 1)).xyz - camera_pos_ws);
+                        const float3 object_to_camera_os = mul(unity_WorldToObject, float4(camera_pos_ws, 1)).xyz;
+                        const float3 world_up_os = mul(unity_WorldToObject, float3(0, 1, 0));
+                        const float3 x_dir_os = cross(world_up_os, object_to_camera_os);
+                        const float3 y_dir_os = cross(object_to_camera_os, x_dir_os);
+                        reticle_forward_ws = normalize(cross(mul(unity_ObjectToWorld, y_dir_os), mul(unity_ObjectToWorld, x_dir_os)));                        
                     #else
                         output.ray_ws = mul(unity_ObjectToWorld, float4(input.position_os, 1)).xyz - _WorldSpaceCameraPos;
+
                         const float3 normal_ws = UnityObjectToWorldNormal(input.normal_os);
                         reticle_forward_ws = dot(normal_ws, output.ray_ws) >= 0 ? normal_ws : -normal_ws;
                     #endif
