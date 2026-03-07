@@ -12,19 +12,23 @@ Install :
 ## Overlays
 These overlay shaders are useful on avatars for world analysis (wireframe, normals, grid, HUD), or adjusting lighting (GammaAdjust).
 
-All overlays have multiple modes, selected by `_Overlay_Mode` property :
+All overlays have multiple modes, statically selected by `_Overlay_Mode` property :
 - `Mesh` : applied on the mesh
-- `Fullscreen` : applied as a screenspace shader (fullscreen).
+- `Fullscreen` : applied as a screenspace shader (fullscreen). Has a dynamic toggle between fullscreen and mesh.
 - `Billboard Sphere` : emulate a sphere mesh, with fullscreen when camera is inside.
   Support mesh **must** be a flat surface with uniform normal. The sphere is defined by `UV0` : center at `(0.5, 0.5)`, radius `0.5`. Example of valid mesh : unity quad.
 
-If you use a fullscreen mode, it is good practice to only animate the mode to fullscreen **locally** (`IsLocal` VRChat parameter) to avoid annoying others.
+If you use a fullscreen mode, it is good practice to only animate the fullscreen toggle **locally** (`IsLocal` VRChat parameter) to avoid annoying others.
 Fullscreen mode uses [VRChat shader globals](https://creators.vrchat.com/worlds/udon/vrc-graphics/vrchat-shader-globals/) to ignore mirror (always) and secondary cameras (toggle).
 Note that this fullscreen effect only works if the mesh renderer is not culled by Unity, so ensure that the mesh bounds are in view of the player camera.
 
 Since v1.4.0 the fullscreen mode uses the vertex stage only (no geometry pass).
 This will fail depending on the mesh vertex ordering ; symptoms are a missing triangle on the screen.
 To fix it change the `vertex order` slider until it displays correctly.
+
+Billboard sphere mode is defined in object space.
+Non uniform scaling can transform the sphere into an ellipsoid.
+Using a very small scale on one axis will emulate a disc (flattened ellipsoid).
 
 The `Demo` scene demonstrate their use on a dummy scene.
 
