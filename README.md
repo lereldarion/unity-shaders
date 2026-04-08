@@ -9,6 +9,12 @@ Install :
 
 [Github repository](https://github.com/lereldarion/unity-shaders/) in case you found this documentation from an installed package.
 
+### TODO
+- stencil debug lighting (separate shader)
+- v2 release
+- udon videotex debug ?
+- time globals on HUD ? local time is not very useful, maybe server time ?
+
 ## Overlays
 These overlay shaders are useful on avatars for world analysis (wireframe, normals, grid, HUD), or adjusting lighting (GammaAdjust).
 
