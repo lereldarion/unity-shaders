@@ -18,7 +18,7 @@ Shader "Lereldarion/Overlay/GammaAdjust" {
         [Enum(Surface Only, 0, Filled, 1)] _Overlay_Sphere_Filled("Sphere type", Float) = 1
         [Toggle(_OVERLAY_BORDER_DISSOLVE_ON)] _Overlay_Border_Dissolve("Enable border dissolve effect", Float) = 0
         [NoScaleOffset] _Overlay_Noise_Texture("Noise texture", 2D) = "" {}
-        _Overlay_Border_Dissolve_Config("Border dissolve config (radius start, radius end, scale, time factor)", Vector) = (0.8, 1, 1, -0.1)
+        _Overlay_Border_Dissolve_Config("Border dissolve config (radius, +-transition thickness, scale, time factor)", Vector) = (0.8, 0.2, 1, 0.1)
     }
     SubShader {
         Tags {

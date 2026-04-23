@@ -137,16 +137,16 @@ bool sphere_os_intersects_near_quad(float3 center, float radius_sq) {
 
 bool overlay_border_dissolve_should_discard(float2 disk_uv) {
     // Radial dissolve pattern : returns true if discard is needed.
+    const float sdf = length(disk_uv);
 
-    const float radius = length(disk_uv);
-    const float transition = (radius - _Overlay_Border_Dissolve_Config.x) / (_Overlay_Border_Dissolve_Config.y - _Overlay_Border_Dissolve_Config.x);
+    const float transition = (sdf - _Overlay_Border_Dissolve_Config.x) / _Overlay_Border_Dissolve_Config.y;
     const float transition_clamped = saturate(transition);
     if(transition != transition_clamped) { return transition > 0; } // Fully kept or discarded, do not sample noise.
     const float threshold = transition_clamped * transition_clamped; // [0, 1] -> [0, 1], starts slow but fast end.
 
     const float2 gradient = normalize(disk_uv);
 
-    const float time = _Overlay_Border_Dissolve_Config.w * _Time.y;
+    const float time = _Overlay_Border_Dissolve_Config.w * _Time.y * -1 /* so that positive speed = dissolves outwards */;
     const float scale = _Overlay_Border_Dissolve_Config.z;
     const float2 phase = frac(time + float2(0, 0.5));
     const float2 noise_weight = phase * (1 - phase); // Curve 0->1->0 over [0, 1].
