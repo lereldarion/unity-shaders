@@ -5,7 +5,7 @@
 //
 // Initial idea from https://github.com/netri/Neitri-Unity-Shaders
 // Using d4rkpl4y3r technique of patching unity_CameraInvProjection (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
-// Improved with SPS-I support, Fullscreen "screenspace" mode, billboard sphere mode, radial dissolve effect
+// Improved with SPS-I support, Fullscreen "screenspace" mode, billboard sphere mode, border dissolve effect
 
 Shader "Lereldarion/Overlay/Normals" {
     Properties {
@@ -14,9 +14,9 @@ Shader "Lereldarion/Overlay/Normals" {
         [ToggleUI] _Overlay_Fullscreen_Enable("Fullscreen mode : dynamic toggle", Float) = 1
         [ToggleUI] _Overlay_Fullscreen_Only_Main_Camera("Fullscreen mode : restricted to main camera", Float) = 1
         [Enum(Surface Only, 0, Filled, 1)] _Overlay_Sphere_Filled("Sphere type", Float) = 1
-        [Toggle(_OVERLAY_RADIAL_DISSOLVE_ENABLED)] _Overlay_Radial_Dissolve("Enable radial dissolve effect", Float) = 0
-        _Overlay_Radial_Dissolve_Noise_Texture("Noise texture for dissolve", 2D) = "" {}
-        _Overlay_Radial_Dissolve_Bounds("Radial dissolve bounds (radius start, end)", Vector) = (0.8, 1, 0, 0)
+        [Toggle(_OVERLAY_BORDER_DISSOLVE_ON)] _Overlay_Border_Dissolve("Enable border dissolve effect", Float) = 0
+        [NoScaleOffset] _Overlay_Noise_Texture("Noise texture", 2D) = "" {}
+        _Overlay_Border_Dissolve_Config("Border dissolve config (radius start, radius end, scale, time factor)", Vector) = (0.8, 1, 1, -0.1)
     }
     SubShader {
         Tags {
@@ -40,7 +40,7 @@ Shader "Lereldarion/Overlay/Normals" {
             #pragma target 5.0
             #pragma multi_compile_instancing
             #pragma shader_feature_local _OVERLAY_MODE_MESH _OVERLAY_MODE_FULLSCREEN _OVERLAY_MODE_BILLBOARD_SPHERE
-            #pragma shader_feature_local __ _OVERLAY_RADIAL_DISSOLVE_ENABLED
+            #pragma shader_feature_local __ _OVERLAY_BORDER_DISSOLVE_ON
             #pragma instancing_options procedural:vertInstancingSetup
 
             #pragma vertex vertex_stage

@@ -27,6 +27,12 @@ float2 ray_sphere_intersect(float3 origin, float3 ray_normalized, float3 sphere_
     return float2(-b - h, -b + h);
 }
 
+float2x2 rotation_matrix_2d(float angle_rad) {
+    float s, c;
+    sincos(angle_rad, s, c);
+    return float2x2(c, -s, s, c);
+}
+
 // VRChat globals
 uniform float _VRChatMirrorMode;
 uniform float _VRChatCameraMode;
@@ -78,15 +84,14 @@ uniform uint _Overlay_Fullscreen_Vertex_Order;
 uniform float _Overlay_Fullscreen_Enable;
 uniform float _Overlay_Fullscreen_Only_Main_Camera;
 uniform float _Overlay_Sphere_Filled;
-uniform float2 _Overlay_Radial_Dissolve_Bounds;
+uniform float4 _Overlay_Border_Dissolve_Config;
 
-UNITY_DECLARE_TEX2D(_Overlay_Radial_Dissolve_Noise_Texture);
-uniform float4 _Overlay_Radial_Dissolve_Noise_Texture_ST;
+UNITY_DECLARE_TEX2D(_Overlay_Noise_Texture);
 
 struct OverlayFragmentInputExtra {
     // Overlay specific data for FragmentInput struct. Depend on static mode.
 
-    #if defined(_OVERLAY_RADIAL_DISSOLVE_ENABLED)
+    #if defined(_OVERLAY_BORDER_DISSOLVE_ON)
     float2 disk_uv : DISK_UV;
     #endif
 
@@ -130,21 +135,27 @@ bool sphere_os_intersects_near_quad(float3 center, float radius_sq) {
     return length_sq(projected_sphere_center - quad_center) <= projected_sphere_radius_sq + 2 * sqrt(projected_sphere_radius_sq * quad_radius_sq) + quad_radius_sq;
 }
 
-bool overlay_radial_dissolve_should_discard(float2 disk_uv) {
+bool overlay_border_dissolve_should_discard(float2 disk_uv) {
     // Radial dissolve pattern : returns true if discard is needed.
 
     const float radius = length(disk_uv);
-    const float transition = (radius - _Overlay_Radial_Dissolve_Bounds.x) / (_Overlay_Radial_Dissolve_Bounds.y - _Overlay_Radial_Dissolve_Bounds.x);
+    const float transition = (radius - _Overlay_Border_Dissolve_Config.x) / (_Overlay_Border_Dissolve_Config.y - _Overlay_Border_Dissolve_Config.x);
     const float transition_clamped = saturate(transition);
     if(transition != transition_clamped) { return transition > 0; } // Fully kept or discarded, do not sample noise.
     const float threshold = transition_clamped * transition_clamped; // [0, 1] -> [0, 1], starts slow but fast end.
 
-    const float2 polar = _Overlay_Radial_Dissolve_Noise_Texture_ST.xy * float2(atan2(disk_uv.y, disk_uv.x) / UNITY_TWO_PI, radius) +  _Time.y * _Overlay_Radial_Dissolve_Noise_Texture_ST.zw;
-    const float2 noise_scales = float2(1, 0.5);
-    const float noise = dot(noise_scales / dot(1, noise_scales), float2(
-        UNITY_SAMPLE_TEX2D_LOD(_Overlay_Radial_Dissolve_Noise_Texture, polar, 0).r,
-        UNITY_SAMPLE_TEX2D_LOD(_Overlay_Radial_Dissolve_Noise_Texture, polar * float2(-2, 2), 0).r
-    ));
+    const float2 gradient = normalize(disk_uv);
+
+    const float time = _Overlay_Border_Dissolve_Config.w * _Time.y;
+    const float scale = _Overlay_Border_Dissolve_Config.z;
+    const float2 phase = frac(time + float2(0, 0.5));
+    const float2 noise_weight = phase * (1 - phase); // Curve 0->1->0 over [0, 1].
+    const float2 displacement = phase * 0.5; // Above 0.5 too much distortion
+    const float2 noise_samples = float2(
+        UNITY_SAMPLE_TEX2D_LOD(_Overlay_Noise_Texture, scale * (disk_uv + gradient * displacement[0]), 0).r,
+        UNITY_SAMPLE_TEX2D_LOD(_Overlay_Noise_Texture, scale * (mul(rotation_matrix_2d(UNITY_PI / 4), disk_uv) + gradient * displacement[1]), 0).r
+    );
+    const float noise = dot(noise_weight, noise_samples) / (noise_weight[0] + noise_weight[1]);
     return noise < threshold;
 }
 
@@ -215,7 +226,7 @@ float4 OverlayObjectToClipPos(float3 position_os, float2 uv0, uint vertex_id, ou
         position_cs = UnityObjectToClipPos(position_os);
     }
 
-    #if defined(_OVERLAY_RADIAL_DISSOLVE_ENABLED)
+    #if defined(_OVERLAY_BORDER_DISSOLVE_ON)
     output.disk_uv = disk_uv;
     #endif
     #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
@@ -232,8 +243,8 @@ float4 OverlayObjectToClipPos(float3 position_os, float2 uv0, uint vertex_id, ou
 void OverlayFragment(OverlayFragmentInputExtra input, out OverlayFragmentOutputExtra output) {
     // In fragment, discard and patch depth, depending on overlay mode
     
-    #if defined(_OVERLAY_RADIAL_DISSOLVE_ENABLED)
-    if (overlay_radial_dissolve_should_discard(input.disk_uv)) { discard; }
+    #if defined(_OVERLAY_BORDER_DISSOLVE_ON)
+    if (overlay_border_dissolve_should_discard(input.disk_uv)) { discard; }
     #endif
     
     #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)                

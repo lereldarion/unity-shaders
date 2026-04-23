@@ -10,6 +10,7 @@ Install :
 [Github repository](https://github.com/lereldarion/unity-shaders/) in case you found this documentation from an installed package.
 
 ### TODO
+- finalize border dissolve noise. add doc.
 - stencil debug lighting (separate shader)
 - v2 release
 - udon videotex debug ?
