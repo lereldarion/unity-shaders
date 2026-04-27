@@ -85,10 +85,12 @@ This shader shows various world positionning data in a fighter jet like HUD with
 - camera far plane distance
 - local fps
 
-The HUD displays like a skybox that is anchored to the object on which the shader is applied ; like a [reflector sight](https://en.wikipedia.org/wiki/Reflector_sight).
-The central crosshair will we aligned with the surface normal vector.
+The HUD displays *at infinity*, like a [reflector sight](https://en.wikipedia.org/wiki/Reflector_sight) or a skybox.
+You can select whether the reticle is aligned with the camera or with the mesh normals.
+If you align with mesh normals, ensure that they are the same direction on the entire mesh, or the HUD will be distorted.
 This works well on a simple quad.
 For more complex geometries, you must ensure that all triangles have the same normal vectors ; this can be done with custom normals in blender.
+In `Billboard Sphere` mode, the reticle is aligned with the sphere center, or camera if inside the sphere.
 
 This shader uses a small internal texture for the font (MSDF strategy).
 

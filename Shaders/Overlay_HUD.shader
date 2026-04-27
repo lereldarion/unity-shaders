@@ -16,6 +16,8 @@ Shader "Lereldarion/Overlay/HUD" {
         [ToggleUI] _Overlay_Fullscreen_Enable("Fullscreen mode : dynamic toggle", Float) = 1
         [ToggleUI] _Overlay_Fullscreen_Only_Main_Camera("Fullscreen mode : restricted to main camera", Float) = 1
         [Enum(Surface Only, 0, Filled, 1)] _Overlay_Sphere_Filled("Sphere type", Float) = 1
+        [Enum(Mesh Normal, 0, Camera, 1)] _Overlay_Reticle_Direction("Reticle direction (when viewed through mesh)", Float) = 0
+        [Enum(Mesh Normal, 0, Camera, 1)] _Overlay_Reticle_Direction_Fullscreen("Reticle direction (when viewed in fullscreen)", Float) = 1
     }
     SubShader {
         Tags {
@@ -61,6 +63,9 @@ Shader "Lereldarion/Overlay/HUD" {
             static const float _Compass_Tick_Length = 0.01;
 
             UNITY_DECLARE_DEPTH_TEXTURE(_CameraDepthTexture);
+
+            uniform float _Overlay_Reticle_Direction;
+            uniform float _Overlay_Reticle_Direction_Fullscreen;
 
             // SDF anti-alias blend
             // https://blog.pkh.me/p/44-perfecting-anti-aliasing-on-signed-distance-functions.html
@@ -322,41 +327,52 @@ Shader "Lereldarion/Overlay/HUD" {
                 bool fullscreen;
                 output.position = OverlayObjectToClipPos(input.position_os, input.uv0, vertex_id, output.overlay_extra, fullscreen);
 
-                float3 reticle_forward_ws;
+                // Compute ray_ws
                 if(fullscreen) {
                     const float4 position_vs = mul(unity_birp_MatrixInvP, output.position);
                     output.ray_ws = mul(unity_MatrixInvV, position_vs.xyz / position_vs.w);
-
-                    const float3 forward_vs = float3(0, 0, -1);
-                    #if defined(UNITY_SINGLE_PASS_STEREO)
-                    reticle_forward_ws = normalize(mul(unity_StereoMatrixInvV[0], forward_vs) + mul(unity_StereoMatrixInvV[1], forward_vs));
-                    #else
-                    reticle_forward_ws = normalize(mul(unity_MatrixInvV, forward_vs));
-                    #endif
                 } else {
                     #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
-                        output.ray_ws = mul(unity_ObjectToWorld, float4(output.overlay_extra.position_os, 1)).xyz - _WorldSpaceCameraPos;
-
-                        // Smooth transition from view to flat with non uniform scale.
-                        // Make a billboard referential in OS, apply scale for XY and recompute Z as cross.
-                        #if defined(UNITY_SINGLE_PASS_STEREO)
-                        const float3 camera_pos_ws = unity_StereoWorldSpaceCameraPos[0];
-                        #else
-                        const float3 camera_pos_ws = _WorldSpaceCameraPos;
-                        #endif
-                        const float3 object_to_camera_os = mul(unity_WorldToObject, float4(camera_pos_ws, 1)).xyz;
-                        const float3 world_up_os = mul(unity_WorldToObject, float3(0, 1, 0));
-                        const float3 x_dir_os = cross(world_up_os, object_to_camera_os);
-                        const float3 y_dir_os = cross(object_to_camera_os, x_dir_os);
-                        reticle_forward_ws = normalize(cross(mul(unity_ObjectToWorld, y_dir_os), mul(unity_ObjectToWorld, x_dir_os)));                        
-                    #else
-                        output.ray_ws = mul(unity_ObjectToWorld, float4(input.position_os, 1)).xyz - _WorldSpaceCameraPos;
-
-                        const float3 normal_ws = UnityObjectToWorldNormal(input.normal_os);
-                        reticle_forward_ws = dot(normal_ws, output.ray_ws) >= 0 ? normal_ws : -normal_ws;
+                    input.position_os = output.overlay_extra.position_os;
                     #endif
+                    output.ray_ws = mul(unity_ObjectToWorld, float4(input.position_os, 1)).xyz - _WorldSpaceCameraPos;
                 }
 
+                // Reticle direction
+                const float3 camera_forward_vs = float3(0, 0, -1);
+                #if defined(UNITY_SINGLE_PASS_STEREO)
+                const float3 camera_forward_ws = normalize(mul(unity_StereoMatrixInvV[0], camera_forward_vs) + mul(unity_StereoMatrixInvV[1], camera_forward_vs));
+                #else
+                const float3 camera_forward_ws = normalize(mul(unity_MatrixInvV, camera_forward_vs));
+                #endif
+                
+                const float3 normal_ws = UnityObjectToWorldNormal(input.normal_os);
+                const float3 normal_forward_ws = dot(normal_ws, output.ray_ws) >= 0 ? normal_ws : -normal_ws;
+
+                float3 reticle_forward_ws;
+
+                #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
+                // Center of sphere through mesh, then camera in fullscreen. Other setups are not great so no configuration
+                if(fullscreen) {
+                    reticle_forward_ws = camera_forward_ws;
+                } else {
+                    // Smooth transition from view to flat with non uniform scale.
+                    // Make a billboard referential in OS, apply scale for XY and recompute Z as cross.
+                    #if defined(UNITY_SINGLE_PASS_STEREO)
+                    const float3 camera_pos_ws = unity_StereoWorldSpaceCameraPos[0];
+                    #else
+                    const float3 camera_pos_ws = _WorldSpaceCameraPos;
+                    #endif
+                    const float3 object_to_camera_os = mul(unity_WorldToObject, float4(camera_pos_ws, 1)).xyz;
+                    const float3 world_up_os = mul(unity_WorldToObject, float3(0, 1, 0));
+                    const float3 x_dir_os = cross(world_up_os, object_to_camera_os);
+                    const float3 y_dir_os = cross(object_to_camera_os, x_dir_os);
+                    reticle_forward_ws = normalize(cross(mul(unity_ObjectToWorld, y_dir_os), mul(unity_ObjectToWorld, x_dir_os)));
+                }
+                #else
+                // Other modes : use selector variables
+                reticle_forward_ws = (fullscreen ? _Overlay_Reticle_Direction_Fullscreen : _Overlay_Reticle_Direction) ? camera_forward_ws : normal_forward_ws;
+                #endif
                 output.hud_data = HudData::compute(reticle_forward_ws);
             }
 
