@@ -73,7 +73,9 @@ void setup_unity_birp_MatrixInvP() {
 // - Fullscreen : apply the overlay as fullscreen, depending on vrchat camera config
 // - Billboard sphere : impostor sphere ar object origin, using the mesh as a billboard. When inside the fake sphere go in fullscreen.
 //
-// These modes are selected by multi_compile macros.
+// These modes are selected by multi_compile macros :
+// - overall shape : _OVERLAY_MODE_MESH _OVERLAY_MODE_FULLSCREEN _OVERLAY_MODE_BILLBOARD_SPHERE
+// - border dissolve : _OVERLAY_BORDER_DISSOLVE_NONE _OVERLAY_BORDER_DISSOLVE_RADIAL _OVERLAY_BORDER_DISSOLVE_TRAIL
 // The logic is annoying due to the many static if branch, so it has been extracted here to keep the overlay-specific code clean :
 // - add the required properties in the property block
 // - add the multi_compile variants. Omit multi_compile for modes that are not to be defined.
@@ -91,8 +93,8 @@ UNITY_DECLARE_TEX2D(_Overlay_Noise_Texture);
 struct OverlayFragmentInputExtra {
     // Overlay specific data for FragmentInput struct. Depend on static mode.
 
-    #if defined(_OVERLAY_BORDER_DISSOLVE_ON)
-    float2 disk_uv : DISK_UV;
+    #if defined(_OVERLAY_BORDER_DISSOLVE_RADIAL) || defined(_OVERLAY_BORDER_DISSOLVE_TRAIL)
+    float2 dissolve_uv : DISSOLVE_UV;
     #endif
 
     #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
@@ -135,35 +137,11 @@ bool sphere_os_intersects_near_quad(float3 center, float radius_sq) {
     return length_sq(projected_sphere_center - quad_center) <= projected_sphere_radius_sq + 2 * sqrt(projected_sphere_radius_sq * quad_radius_sq) + quad_radius_sq;
 }
 
-bool overlay_border_dissolve_should_discard(float2 disk_uv) {
-    // Radial dissolve pattern : returns true if discard is needed.
-    const float sdf = length(disk_uv);
-
-    const float transition = (sdf - _Overlay_Border_Dissolve_Config.x) / _Overlay_Border_Dissolve_Config.y;
-    const float transition_clamped = saturate(transition);
-    if(transition != transition_clamped) { return transition > 0; } // Fully kept or discarded, do not sample noise.
-    const float threshold = transition_clamped * transition_clamped; // [0, 1] -> [0, 1], starts slow but fast end.
-
-    const float2 gradient = normalize(disk_uv);
-
-    const float time = _Overlay_Border_Dissolve_Config.w * _Time.y * -1 /* so that positive speed = dissolves outwards */;
-    const float scale = _Overlay_Border_Dissolve_Config.z;
-    const float2 phase = frac(time + float2(0, 0.5));
-    const float2 noise_weight = phase * (1 - phase); // Curve 0->1->0 over [0, 1].
-    const float2 displacement = phase * 0.5; // Above 0.5 too much distortion
-    const float2 noise_samples = float2(
-        UNITY_SAMPLE_TEX2D_LOD(_Overlay_Noise_Texture, scale * (disk_uv + gradient * displacement[0]), 0).r,
-        UNITY_SAMPLE_TEX2D_LOD(_Overlay_Noise_Texture, scale * (mul(rotation_matrix_2d(UNITY_PI / 4), disk_uv) + gradient * displacement[1]), 0).r
-    );
-    const float noise = dot(noise_weight, noise_samples) / (noise_weight[0] + noise_weight[1]);
-    return noise < threshold;
-}
-
 float4 OverlayObjectToClipPos(float3 position_os, float2 uv0, uint vertex_id, out OverlayFragmentInputExtra output, out bool fullscreen) {
     // Computes the clip space position, and extra data, depending on overlay mode.
     float4 position_cs;
 
-    float2 disk_uv = 2 * uv0 - 1;
+    float2 centered_uv = 2 * uv0 - 1; // [-1, 1] for an input UV square
 
     // Determine if we need fullscreen fragment
     #if defined(_OVERLAY_MODE_MESH)
@@ -171,7 +149,7 @@ float4 OverlayObjectToClipPos(float3 position_os, float2 uv0, uint vertex_id, ou
     #elif defined(_OVERLAY_MODE_FULLSCREEN)
     fullscreen = _Overlay_Fullscreen_Enable && _VRChatMirrorMode == 0 && _VRChatCameraMode * _Overlay_Fullscreen_Only_Main_Camera == 0;
     #elif defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
-    const float sphere_radius_sq_os = length_sq(position_os) / max(length_sq(disk_uv), 1e-6);
+    const float sphere_radius_sq_os = length_sq(position_os) / max(length_sq(centered_uv), 1e-6);
     const float sphere_radius_os = sqrt(sphere_radius_sq_os);
     output.sphere_radius_sq_os = sphere_radius_sq_os;
 
@@ -193,10 +171,8 @@ float4 OverlayObjectToClipPos(float3 position_os, float2 uv0, uint vertex_id, ou
             #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
             float4 v = mul(unity_birp_MatrixInvMVP, position_cs);
             output.position_os = v.xyz / v.w;
-            disk_uv = 0; // Fullscreen inside sphere
-            #else
-            disk_uv = position_cs.xy * rsqrt(2); // Fullscreen radial dissolve
             #endif
+            centered_uv = 0; // If fullscreen, disable border dissolve
         } else {
             position_cs = f32_nan.xxxx; // Vertex discard
 
@@ -219,15 +195,15 @@ float4 OverlayObjectToClipPos(float3 position_os, float2 uv0, uint vertex_id, ou
             billboard_normal_os = camera_pos_os;
         }
         const float3 world_up_os = mul(unity_WorldToObject, float3(0, 1, 0));
-        position_os = mul(sphere_radius_os * float3(disk_uv * apparent_radius_factor, 1), billboard_referential(billboard_normal_os, world_up_os));
+        position_os = mul(sphere_radius_os * float3(centered_uv * apparent_radius_factor, 1), billboard_referential(billboard_normal_os, world_up_os));
         output.position_os = position_os;
         #endif
 
         position_cs = UnityObjectToClipPos(position_os);
     }
 
-    #if defined(_OVERLAY_BORDER_DISSOLVE_ON)
-    output.disk_uv = disk_uv;
+    #if defined(_OVERLAY_BORDER_DISSOLVE_RADIAL) || defined(_OVERLAY_BORDER_DISSOLVE_TRAIL)
+    output.dissolve_uv = centered_uv;
     #endif
     #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
     output.ray_os = is_orthographic ? camera_forward_os : output.position_os - camera_pos_os;
@@ -243,8 +219,42 @@ float4 OverlayObjectToClipPos(float3 position_os, float2 uv0, uint vertex_id, ou
 void OverlayFragment(OverlayFragmentInputExtra input, out OverlayFragmentOutputExtra output) {
     // In fragment, discard and patch depth, depending on overlay mode
     
-    #if defined(_OVERLAY_BORDER_DISSOLVE_ON)
-    if (overlay_border_dissolve_should_discard(input.disk_uv)) { discard; }
+    #if defined(_OVERLAY_BORDER_DISSOLVE_RADIAL) || defined(_OVERLAY_BORDER_DISSOLVE_TRAIL)
+    {
+        // UV is centered ([-1, 1]) from uv0
+        #if defined(_OVERLAY_BORDER_DISSOLVE_RADIAL)
+        const float sdf = length(input.dissolve_uv);
+        const float2 gradient = input.dissolve_uv / sdf; // normalize
+        #elif defined(_OVERLAY_BORDER_DISSOLVE_TRAIL)
+        // Trail : UV.x is unbounded along the trail, and y goes from [-1,1]. Use Static mode in the trail renderer.
+        const float sdf = abs(input.dissolve_uv.y);
+        const float2 gradient = float2(0, sign(input.dissolve_uv.y));
+        #endif
+
+        bool do_discard;
+        const float transition = (sdf - _Overlay_Border_Dissolve_Config.x) / _Overlay_Border_Dissolve_Config.y;
+        const float transition_clamped = saturate(transition);
+        if(transition != transition_clamped) { 
+            // Outside of transition zone. Fully kept or discarded, do not sample noise.
+            do_discard = transition > 0;
+        } else {
+            // Transition zone
+            const float threshold = transition_clamped * transition_clamped; // [0, 1] -> [0, 1], starts slow but fast end.
+    
+            const float time = _Overlay_Border_Dissolve_Config.w * _Time.y * -1 /* so that positive speed = dissolves outwards */;
+            const float scale = _Overlay_Border_Dissolve_Config.z;
+            const float2 phase = frac(time + float2(0, 0.5));
+            const float2 noise_weight = phase * (1 - phase); // Curve 0->1->0 over [0, 1].
+            const float2 displacement = phase * 0.5; // Above 0.5 too much distortion
+            const float2 noise_samples = float2(
+                UNITY_SAMPLE_TEX2D_LOD(_Overlay_Noise_Texture, scale * (input.dissolve_uv + gradient * displacement[0]), 0).r,
+                UNITY_SAMPLE_TEX2D_LOD(_Overlay_Noise_Texture, scale * (mul(rotation_matrix_2d(UNITY_PI / 4), input.dissolve_uv) + gradient * displacement[1]), 0).r
+            );
+            const float noise = dot(noise_weight, noise_samples) / (noise_weight[0] + noise_weight[1]);
+            do_discard = noise < threshold;
+        }
+        if(do_discard) { discard; }
+    }
     #endif
     
     #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)                

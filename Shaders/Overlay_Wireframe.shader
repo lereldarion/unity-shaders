@@ -14,7 +14,7 @@ Shader "Lereldarion/Overlay/Wireframe" {
         [ToggleUI] _Overlay_Fullscreen_Enable("Fullscreen mode : dynamic toggle", Float) = 1
         [ToggleUI] _Overlay_Fullscreen_Only_Main_Camera("Fullscreen mode : restricted to main camera", Float) = 1
         [Enum(Surface Only, 0, Filled, 1)] _Overlay_Sphere_Filled("Sphere type", Float) = 1
-        [Toggle(_OVERLAY_BORDER_DISSOLVE_ON)] _Overlay_Border_Dissolve("Enable border dissolve effect", Float) = 0
+        [KeywordEnum(None, Radial, Trail)] _Overlay_Border_Dissolve("Border dissolve", Float) = 0
         [NoScaleOffset] _Overlay_Noise_Texture("Noise texture", 2D) = "" {}
         _Overlay_Border_Dissolve_Config("Border dissolve config (radius, +-transition thickness, scale, time factor)", Vector) = (0.8, 0.2, 1, 0.1)
     }
@@ -40,7 +40,7 @@ Shader "Lereldarion/Overlay/Wireframe" {
             #pragma target 5.0
             #pragma multi_compile_instancing
             #pragma shader_feature_local _OVERLAY_MODE_MESH _OVERLAY_MODE_FULLSCREEN _OVERLAY_MODE_BILLBOARD_SPHERE
-            #pragma shader_feature_local __ _OVERLAY_BORDER_DISSOLVE_ON
+            #pragma shader_feature_local _OVERLAY_BORDER_DISSOLVE_NONE _OVERLAY_BORDER_DISSOLVE_RADIAL _OVERLAY_BORDER_DISSOLVE_TRAIL
             #pragma instancing_options procedural:vertInstancingSetup
 
             #pragma vertex vertex_stage
