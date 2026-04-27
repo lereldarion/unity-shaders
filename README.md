@@ -10,7 +10,6 @@ Install :
 [Github repository](https://github.com/lereldarion/unity-shaders/) in case you found this documentation from an installed package.
 
 ### TODO
-- finalize border dissolve : doc, examples.
 - stencil debug lighting (separate shader)
 - v2 release
 - udon videotex debug ?
@@ -36,6 +35,15 @@ To fix it change the `vertex order` slider until it displays correctly.
 Billboard sphere mode is defined in object space.
 Non uniform scaling can transform the sphere into an ellipsoid.
 Using a very small scale on one axis will emulate a disc (flattened ellipsoid).
+
+Overlays with a solid color also support border dissolve to appear less artificial :
+- `Radial` dissolve mode makes the overlay dissolve radially from the UV `(0.5, 0.5)` point.
+  Direction, speed, noise scale, and transition scale and position can be selected.
+  Using a negative transition width dissolves at the center instead of the sides.
+  Works for all 3 overlay modes, but inverted billboard sphere is not great.
+- `Trail` mode applies the dissolve along the UV y dimension, useful for `TrailRenderer`.
+  Use `Mesh` mode. Sadly adding a dissolve on trail ends is not possible.
+![](.github/overlay_modes.jpg)
 
 The `Demo` scene demonstrate their use on a dummy scene.
 
