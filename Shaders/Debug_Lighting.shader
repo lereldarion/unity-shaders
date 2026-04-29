@@ -22,7 +22,7 @@
 
 Shader "Lereldarion/Debug/Lighting" {
     Properties {
-        _Distance_Limit ("Enable visuals only if distance object-camera is lower than this threshold", Float) = 10
+        _Distance_Limit ("Disable shader if distance(camera, object) > threshold. Shader is unconditionnaly enabled if threshold <= 0", Float) = 10
         [Enum(Mesh origin, 0, Camera, 1)] _Anchor_Mode ("Choice of anchor for lightprobe sampler and directional lights", Float) = 0
         _Anchor_ViewSpace_Displacement ("Viewspace displacement from anchor position", Vector) = (0, 0, 0, 0)
         
@@ -174,6 +174,7 @@ Shader "Lereldarion/Debug/Lighting" {
         }
 
         bool within_distance_limit() {
+            if(_Distance_Limit <= 0) { return true; }
             float3 object_ws = mul(unity_ObjectToWorld, float4(0, 0, 0, 1)).xyz;
             return length_sq(object_ws - centered_camera_ws) <= _Distance_Limit * _Distance_Limit;
         }
