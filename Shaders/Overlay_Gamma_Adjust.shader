@@ -4,7 +4,7 @@
 // An overlay which amplifies lighting by using a gamma curve with fractional exponent.
 // Added Fullscreen "screenspace" mode, billboard sphere mode, border dissolve effect
 
-Shader "Lereldarion/Overlay/GammaAdjust" {
+Shader "Lereldarion/Overlay/Gamma Adjust" {
     Properties {
         [Header(Gamma)]
         _Gamma_Adjust_Value("Gamma Adjust Value", Range(-5, 5)) = 0
