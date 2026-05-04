@@ -10,13 +10,13 @@ Install :
 [Github repository](https://github.com/lereldarion/unity-shaders/) in case you found this documentation from an installed package.
 
 ### TODO
-- stencil debug lighting (separate shader)
+- trail mode discard ends to fix emitting crap
 - v2 release
 - udon videotex debug ?
 - audio frequency-time plot with CRT
 
 ## Overlays
-These overlay shaders are useful on avatars for world analysis (wireframe, normals, grid, HUD), or adjusting lighting (GammaAdjust).
+These overlay shaders are useful on avatars for world analysis (Wireframe, Normals, Grid, HUD), adjusting lighting (Gamma Adjust), debugging lights (Debug Lighting).
 
 All overlays have multiple modes, statically selected by `_Overlay_Mode` property :
 - `Mesh` : applied on the mesh
@@ -96,11 +96,8 @@ This shader uses a small internal texture for the font (MSDF strategy).
 
 ![](.github/overlay_hud.jpg)
 
-## Debug tools
-Other debug / introspection tools which are not overlays
-
-### Lighting
-Apply to any mesh (only 1 vertex required), and it will display lighting configuration elements that touch the mesh renderer as gizmos in the world :
+## Debug Lighting
+Display lighting configuration elements that touch the mesh renderer as gizmos in the world :
 - Unity realtime lights : pixel directional / point / spot lights, vertex point lights, colored by the light color.
 - Unity reflection probes : displays the bounding boxes and their center, with a sphere to show the raw cubemap. Color of the lines shows the blend factor when 2 probes are active.
 - Unity light probes : sphere with lighting values applied to it. Positions are not available in the shader so they cannot be displayed.
@@ -109,14 +106,20 @@ Apply to any mesh (only 1 vertex required), and it will display lighting configu
     - volume bounding boxes, dashed lines (dash size is texture resolution). Color hue represents indexes.
     - lights with simpler dashed patterns compared to unity equivalents. Color is the light color. Dash size is 1m and line lengths indicate culling distance. Display light cookies on spheres if used.
 
+Available in two variants :
+- `Debug/Lighting` : apply to any mesh (only 1 vertex required), displays gizmos if within the distance limit
+- `Overlay/Debug Lighting` : displays gizmos only if seen through the overlay window. Support the various overlay modes.
+
 ![](.github/debug_lighting.png)
+
+## Other
 
 ### TBN
 Applied to mesh, this shaders displays the tangent space at each vertex as small 3D lines.
 
 ![](.github/debug_tbn.png)
 
-## Hidden
+### Hidden
 Material that does not render anything.
 
 This is useful to fill material slots that cannot be disabled by animators on avatars (skinned mesh slots).

@@ -9,6 +9,7 @@
 - Normals / Wireframe / Gamma : add border dissolve effect. Only looks good on overlays that fill the screen, to make a nice border transition. Supports both `Radial` option, and `Trail` for trails.
 - HUD : added reticle alignment options : mesh normals or camera, separate for mesh view and fullscreen view.
 - Lighting Debug : Added selectable anchor mode. Added directional light gizmo size. Added way to disable distance check.
+- Added lighting debug **overlay**
 
 ## 1.4.1 - 08/02/2026
 - Grid : remove broken grid for infnite distance (skybox)
