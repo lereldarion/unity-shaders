@@ -10,7 +10,7 @@ Install :
 [Github repository](https://github.com/lereldarion/unity-shaders/) in case you found this documentation from an installed package.
 
 ### TODO
-- trail mode discard ends to fix emitting crap
+- trail mode experiment with particle ; seems way better than raw trail renderer
 - v2 release
 - udon videotex debug ?
 - audio frequency-time plot with CRT

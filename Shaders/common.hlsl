@@ -90,6 +90,11 @@ uniform float4 _Overlay_Border_Dissolve_Config;
 
 UNITY_DECLARE_TEX2D(_Overlay_Noise_Texture);
 
+struct OverlayVertexInputExtra {
+    float2 uv0 : TEXCOORD0;
+    uint vertex_id : SV_VertexID;
+};
+
 struct OverlayFragmentInputExtra {
     // Overlay specific data for FragmentInput struct. Depend on static mode.
 
@@ -137,11 +142,11 @@ bool sphere_os_intersects_near_quad(float3 center, float radius_sq) {
     return length_sq(projected_sphere_center - quad_center) <= projected_sphere_radius_sq + 2 * sqrt(projected_sphere_radius_sq * quad_radius_sq) + quad_radius_sq;
 }
 
-float4 OverlayObjectToClipPos(float3 position_os, float2 uv0, uint vertex_id, out OverlayFragmentInputExtra output, out bool fullscreen) {
+float4 OverlayObjectToClipPos(float3 position_os, OverlayVertexInputExtra input, out OverlayFragmentInputExtra output, out bool fullscreen) {
     // Computes the clip space position, and extra data, depending on overlay mode.
     float4 position_cs;
 
-    float2 centered_uv = 2 * uv0 - 1; // [-1, 1] for an input UV square
+    float2 centered_uv = 2 * input.uv0 - 1; // [-1, 1] for an input UV square
 
     // Determine if we need fullscreen fragment
     #if defined(_OVERLAY_MODE_MESH)
@@ -162,8 +167,8 @@ float4 OverlayObjectToClipPos(float3 position_os, float2 uv0, uint vertex_id, ou
 
     if(fullscreen) {
         // Fullscreen mode : cover the screen with a quad by redirecting existing vertices
-        if(vertex_id < 4) {
-            const uint2 bits = vertex_id & uint2(2, 1); // [00, 01, 10, 11]
+        if(input.vertex_id < 4) {
+            const uint2 bits = input.vertex_id & uint2(2, 1); // [00, 01, 10, 11]
             const float2 ndc = bits ? 1 : -1; // [(-1, -1), (-1, 1), (1, -1), (1, 1)]
             const float2 swap = _Overlay_Fullscreen_Vertex_Order & bits.yx ? -1 : 1;
             position_cs = float4(ndc * swap, UNITY_NEAR_CLIP_VALUE, 1);
@@ -211,9 +216,9 @@ float4 OverlayObjectToClipPos(float3 position_os, float2 uv0, uint vertex_id, ou
 
     return position_cs;
 }
-float4 OverlayObjectToClipPos(float3 position_os, float2 uv0, uint vertex_id, out OverlayFragmentInputExtra output) {
+float4 OverlayObjectToClipPos(float3 position_os, OverlayVertexInputExtra input, out OverlayFragmentInputExtra output) {
     bool dummy;
-    return OverlayObjectToClipPos(position_os, uv0, vertex_id, output, dummy);
+    return OverlayObjectToClipPos(position_os, input, output, dummy);
 }
 
 void OverlayFragment(OverlayFragmentInputExtra input, out OverlayFragmentOutputExtra output) {
