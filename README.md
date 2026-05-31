@@ -10,7 +10,6 @@ Install :
 [Github repository](https://github.com/lereldarion/unity-shaders/) in case you found this documentation from an installed package.
 
 ### TODO
-- trail mode experiment with particle ; seems way better than raw trail renderer
 - v2 release
 - udon videotex debug ?
 - audio frequency-time plot with CRT
@@ -41,8 +40,10 @@ Overlays with a solid color also support border dissolve to appear less artifici
   Direction, speed, noise scale, and transition scale and position can be selected.
   Using a negative transition width dissolves at the center instead of the sides.
   Works for all 3 overlay modes, but inverted billboard sphere is not great.
-- `Trail` mode applies the dissolve along the UV y dimension, useful for `TrailRenderer`.
-  Use `Mesh` mode. Sadly adding a dissolve on trail ends is not possible.
+- `Trail` mode applies the dissolve along the UV y dimension, useful for `TrailRenderer` sides.
+  Use with `Mesh` overlay mode. Set the `TrailRenderer` `Texture Mode` to `Static`.
+  Sadly adding a dissolve on trail ends is likely not possible ; unity does not provide the information to the shader in trail renderer, and particle trails do not have the right behavior when stopping trail emission.
+
 ![](.github/overlay_modes.jpg)
 
 The `Demo` scene demonstrate their use on a dummy scene.
