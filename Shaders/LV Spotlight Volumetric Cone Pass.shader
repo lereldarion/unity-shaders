@@ -3,6 +3,8 @@
 // Apply on a mesh that covers the entire area affected by the spot lights.
 // An easy option is a stretched unity cube.
 
+// TODO switch to depth reconstruction that works on quest
+
 Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
     Properties {
         _Fog_Density("Fog density", Float) = 0.1
@@ -44,6 +46,49 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
             // Depth reconstruction
 
             UNITY_DECLARE_DEPTH_TEXTURE(_CameraDepthTexture);
+            uniform float4 _CameraDepthTexture_TexelSize;
+
+            // unity_MatrixInvP is not provided in BIRP. unity_CameraInvProjection is only the basic camera projection (no VR components).
+            // Using d4rkpl4y3r technique of patching unity_CameraInvProjection (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
+            // Use after instance id have been set ! UNITY_SETUP_INSTANCE_ID(input)
+            static float4x4 unity_birp_MatrixInvP;
+            static float4x4 unity_birp_MatrixInvMVP;
+            void setup_unity_birp_MatrixInvP() {
+                float4x4 flipZ = float4x4(1, 0, 0, 0,
+                                        0, 1, 0, 0,
+                                        0, 0, -1, 1,
+                                        0, 0, 0, 1);
+                float4x4 scaleZ = float4x4(1, 0, 0, 0,
+                                        0, 1, 0, 0,
+                                        0, 0, 2, -1,
+                                        0, 0, 0, 1);
+                float4x4 invP = unity_CameraInvProjection;
+                float4x4 flipY = float4x4(1, 0, 0, 0,
+                                        0, _ProjectionParams.x, 0, 0,
+                                        0, 0, 1, 0,
+                                        0, 0, 0, 1);
+                float4x4 m = mul(scaleZ, flipZ);
+                m = mul(invP, m);
+                m = mul(flipY, m);
+                m._24 *= _ProjectionParams.x;
+                m._42 *= -1;
+                unity_birp_MatrixInvP = m;
+                unity_birp_MatrixInvMVP = mul(unity_WorldToObject, mul(unity_MatrixInvV, unity_birp_MatrixInvP));
+            }
+
+            float3 position_vs_at_pixel(float2 pixel_position) {
+                // HLSLSupport.hlsl : DepthTexture is a TextureArray in SPS-I, so its size should be safe to use to get uvs.
+                float2 depth_texture_uv = pixel_position * _CameraDepthTexture_TexelSize.xy;
+                float raw = SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(depth_texture_uv, 0, 0)); // [0,1]
+                if(!(0 < raw && raw < 1)) { discard; } // Ignore Skybox
+
+                float2 clipPos = ((pixel_position / _ScreenParams.xy) * 2 - 1) * float2(1, -1);
+                #ifdef UNITY_SINGLE_PASS_STEREO
+                    clipPos.x -= 2 * unity_StereoEyeIndex;
+                #endif
+                float4 v = mul(unity_birp_MatrixInvP, float4(clipPos, raw, 1));
+                return v.xyz / v.w;
+            }
 
             ///////////////////////////////////////////////////////////////////////
             // Geometry
@@ -117,7 +162,7 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
             uniform float4 _UdonPointLightVolumeDirection[128]; // Rotation quaternion (point light, area light, cookie spot light) | XYZ direction + W cone falloff (analytic spot light)
             uniform float3 _UdonPointLightVolumeCustomID[128]; // X = 0 if analytic, -cookie_ID, or +custom_lut_ID. Y shadow mask id. Z squared culling distance.
 
-            void add_vrc_light_volume_light_contribution(uint light_id, Ray ray_ws, inout half3 output) {
+            void add_vrc_light_volume_light_contribution(uint light_id, Ray ray_ws, float scene_depth, inout half3 output) {
                 // Based on function LV_PointLight() in LightVolumes.cginc, to understand the metadata format and use
 
                 const float4 position = _UdonPointLightVolumePosition[light_id];
@@ -187,8 +232,11 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
                         }
                     }
                 }
+
+                // Cut range at scene_depth. If no intersection happened this is still -1.
+                ray_range_within_cone[1] = min(ray_range_within_cone[1], scene_depth);
                 
-                if(ray_range_within_cone[1] >= ray_range_within_cone[0]) {
+                if(ray_range_within_cone[1] > ray_range_within_cone[0]) {
                     // Debug
                     float3 hue = color.rgb / max(color.r, max(color.g, color.b));
                     output += 0.2 * hue;
@@ -204,7 +252,6 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
             };
             struct FragmentInput {
                 float4 position : SV_POSITION;
-                float4 screen_position : SCREEN_POSITION;
                 Ray ray_ws : RAY_WS;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
                 UNITY_VERTEX_OUTPUT_STEREO
@@ -216,7 +263,6 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
 
                 output.position = UnityObjectToClipPos(input.position_os);
-                output.screen_position = ComputeScreenPos(output.position);
 
                 const bool is_orthographic = UNITY_MATRIX_P._m33 == 1.0;
                 const float3 camera_ws = mul(unity_MatrixInvV, float4(0, 0, 0, 1)).xyz;
@@ -235,12 +281,18 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
                 input.ray_ws.normalize();
-
+                
                 output_color = half4(_Debug_Area.xxx * 0.5, 1);
+
+                // Compute scene depth for ray. Used to limit cone intersection ranges.
+                setup_unity_birp_MatrixInvP();
+                const float3 scene_vs = position_vs_at_pixel(input.position.xy);
+                const float3 scene_ws = mul(unity_MatrixInvV, float4(scene_vs, 1)).xyz;
+                const float depth = length(scene_ws - input.ray_ws.origin);
                 
                 const uint point_light_volume_count = min((uint) _UdonPointLightVolumeCount, 128);                
                 for(uint light_id = 0; light_id < point_light_volume_count; light_id += 1) {
-                    add_vrc_light_volume_light_contribution(light_id, input.ray_ws, output_color.rgb);
+                    add_vrc_light_volume_light_contribution(light_id, input.ray_ws, depth, output_color.rgb);
                 }
             }
             ENDCG
