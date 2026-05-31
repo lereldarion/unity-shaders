@@ -162,6 +162,19 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
             uniform float4 _UdonPointLightVolumeDirection[128]; // Rotation quaternion (point light, area light, cookie spot light) | XYZ direction + W cone falloff (analytic spot light)
             uniform float3 _UdonPointLightVolumeCustomID[128]; // X = 0 if analytic, -cookie_ID, or +custom_lut_ID. Y shadow mask id. Z squared culling distance.
 
+            float3 LV_PointLightAttenuation(float sqdist, float sqlightSize, float3 color, float sqMaxDist) {
+                float mask = saturate(1 - sqdist / sqMaxDist);
+                return mask * mask * color * sqlightSize / (sqdist + sqlightSize);
+            }
+            float LV_PointLightSolidAngle(float sqdist, float sqlightSize) {
+                return saturate(sqrt(sqdist / (sqlightSize + sqdist)));
+            }
+            float LV_Smoothstep01(float x) { return x * x * (3 - 2 * x); }
+            float LV_EvaluateSH(float L0, float3 L1, float3 n) { return L0 + dot(L1, n); }
+            float3 LightVolumeEvaluate(float3 worldNormal, float3 L0, float3 L1r, float3 L1g, float3 L1b) {
+                return float3(LV_EvaluateSH(L0.r, L1r, worldNormal), LV_EvaluateSH(L0.g, L1g, worldNormal), LV_EvaluateSH(L0.b, L1b, worldNormal));
+            }
+
             void add_vrc_light_volume_light_contribution(uint light_id, Ray ray_ws, float scene_depth, inout half3 output) {
                 // Based on function LV_PointLight() in LightVolumes.cginc, to understand the metadata format and use
 
@@ -237,9 +250,28 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
                 ray_range_within_cone[1] = min(ray_range_within_cone[1], scene_depth);
                 
                 if(ray_range_within_cone[1] > ray_range_within_cone[0]) {
-                    // Debug
-                    float3 hue = color.rgb / max(color.r, max(color.g, color.b));
-                    output += 0.2 * hue;
+                    // Prototype lighting
+                    const float3 sample_point = ray_ws.position_at(dot(0.5, ray_range_within_cone));
+                    const float lit_length = ray_range_within_cone[1] - ray_range_within_cone[0];
+
+                    float3 dir = position.xyz - sample_point;
+                    float sqlen = max(dot(dir, dir), 1e-6);
+                    float3 dirN = dir * rsqrt(sqlen);
+                    float spotMask = dot(direction_or_rotation.xyz, -dirN) - cos_angle;
+                    float3 att = LV_PointLightAttenuation(sqlen, -position.w, color.rgb, light_range_sq);
+                    float smoothedCone = LV_Smoothstep01(saturate(spotMask * direction_or_rotation.w));
+                    float3 l0 = att * smoothedCone;
+                    float3 l1 = dirN * LV_PointLightSolidAngle(sqlen, (-position.w) * saturate(1 - cos_angle));
+                    float3 L1r = l0.r * l1;
+                    float3 L1g = l0.g * l1;
+                    float3 L1b = l0.b * l1;
+
+                    // fake face at perfect angle to reflect light towards camera along its ray
+                    float3 fog_normal = normalize(dirN + (-ray_ws.direction));
+                    float3 sh_color = LightVolumeEvaluate(fog_normal, l0, L1r, L1g, L1b);
+
+                    // output += _Fog_Density * color.rgb / max(color.r, max(color.g, color.b));
+                    output += _Fog_Density * sh_color * lit_length;
                 }
             }
 
