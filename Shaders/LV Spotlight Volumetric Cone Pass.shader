@@ -50,11 +50,11 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
 
             float length_sq(float3 v) { return dot(v, v); }
 
-            bool within_positive_cone(float3 p, float3 cone_origin, float3 cone_axis, float sqr_cos_angle) {
+            bool within_positive_cone(float3 p, float3 cone_origin, float3 cone_axis, float cos_angle_sq) {
                 const float3 v = p - cone_origin;
                 const float d = dot(v, cone_axis);
                 if(d <= 0) { return false; }
-                return d * d >= sqr_cos_angle * length_sq(v);
+                return d * d >= cos_angle_sq * length_sq(v);
             }
             bool within_sphere(float3 p, float3 sphere_origin, float sqr_radius) {
                 return length_sq(p - sphere_origin) <= sqr_radius;
@@ -68,11 +68,13 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
                 void normalize() { direction = normalize(direction); }
                 float3 position_at(float t) { return origin + t * direction; }
 
-                // If true, return the t of intersections between ray and the symmetric cone
-                bool cone_intersection(float3 cone_origin, float3 cone_axis, float sqr_cos_angle, out float2 intersection_t);
+                // Intersection test functions. Require a normalized direction.
+                // Return true and set a pair of sorted `t` intersections points if there is an intersect.
+                bool cone_intersection(float3 cone_origin, float3 cone_axis, float cos_angle_sq, out float2 intersection_t);
+                bool sphere_intersection(float3 sphere_center, float sphere_radius_sq, out float2 intersection_t);
             };
 
-            bool Ray::cone_intersection(float3 cone_origin, float3 cone_axis, float sqr_cos_angle, out float2 intersection_t) {
+            bool Ray::cone_intersection(float3 cone_origin, float3 cone_axis, float cos_angle_sq, out float2 intersection_t) {
                 // A point p is within positive cone if: dot(ca, p-co) >= length(p-co) cos(a)
                 // With ro = ray.origin, ra = normalize(ray.direction), do = ro-co :
                 // dot(ca, do) + t dot(ca, ra) >= length(do + t ra) cos(a)
@@ -85,20 +87,26 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
                 const float dot_do_ra = dot(d_origin, direction);
                 const float dot_do_do = dot(d_origin, d_origin);
                 // Second order equation at^2 + bt + c >= 0
-                const float eqn_a = dot_ca_ra * dot_ca_ra - sqr_cos_angle; // dot(ca, ra)^2 - cos(a)^2
-                const float eqn_b_2 = dot_ca_ra * dot_ca_do - sqr_cos_angle * dot_do_ra; // 2 (dot(ca, ra) dot(ca, do) - cos(a)^2 dot(do, ra))
-                const float eqn_c = dot_ca_do * dot_ca_do - sqr_cos_angle * dot_do_do; // dot(ca, do)^2 - cos(a)^2 dot(do, do)
+                const float eqn_a = dot_ca_ra * dot_ca_ra - cos_angle_sq; // dot(ca, ra)^2 - cos(a)^2
+                const float eqn_b_2 = dot_ca_ra * dot_ca_do - cos_angle_sq * dot_do_ra; // 2 (dot(ca, ra) dot(ca, do) - cos(a)^2 dot(do, ra))
+                const float eqn_c = dot_ca_do * dot_ca_do - cos_angle_sq * dot_do_do; // dot(ca, do)^2 - cos(a)^2 dot(do, do)
                 // delta = b^2 - 4ac, solutions (-b +/- sqrt(delta)) / 2a
                 const float eqn_delta_4 = eqn_b_2 * eqn_b_2 - eqn_a * eqn_c;
-                const bool has_solutions = eqn_delta_4 > 0; // Ignore edge case == 0
-                if(has_solutions) {
-                    // sign here sorts solutions in increasing order
-                    intersection_t = (-eqn_b_2 + float2(-1, 1) * sign(eqn_a) * sqrt(eqn_delta_4)) / eqn_a;
-                }
-                return has_solutions;
+                if(eqn_delta_4 <= 0) { return false; } // Ignore edge case == 0
+                intersection_t = (-eqn_b_2 + float2(-1, 1) * sign(eqn_a) * sqrt(eqn_delta_4)) / eqn_a; // sign here sorts solutions in increasing order
+                return true;
             }
 
-
+            bool Ray::sphere_intersection(float3 sphere_center, float sphere_radius_sq, out float2 intersection_t) {
+                // https://iquilezles.org/articles/intersectors/
+                const float3 oc = origin - sphere_center;
+                const float b = dot(oc, direction);
+                const float c = dot(oc, oc) - sphere_radius_sq;
+                const float h_sq = b * b - c;
+                if (h_sq < 0) { return false; }
+                intersection_t = -b + float2(-1, 1) * sqrt(h_sq);
+                return true;
+            }
 
             ///////////////////////////////////////////////////////////////////////
             // VRC Light Volumes https://github.com/REDSIM/VRCLightVolumes/
@@ -127,35 +135,55 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
                 const float4 direction_or_rotation = _UdonPointLightVolumeDirection[light_id];
 
                 const float3 cone_axis = direction_or_rotation.xyz;
-                const float sqr_light_range = custom_id_data.z; // Squared culling distance
+                const float light_range_sq = custom_id_data.z; // Squared culling distance
                 const float cos_angle = color.w;
-                const float sqr_cos_angle = cos_angle * cos_angle;
+                const float cos_angle_sq = cos_angle * cos_angle;
 
                 // We want the range of the ray within the spotlight cone to sample.
                 // We should have 0 <= x < y for a valid range. Start with an invalid one.
                 float2 ray_range_within_cone = float2(_ProjectionParams.z /* far plane */, -1);
 
                 // Check if camera is inside.
-                if(within_sphere(ray_ws.origin, position.xyz, sqr_light_range) && within_positive_cone(ray_ws.origin, position.xyz, cone_axis, sqr_cos_angle)) {
+                if(within_sphere(ray_ws.origin, position.xyz, light_range_sq) && within_positive_cone(ray_ws.origin, position.xyz, cone_axis, cos_angle_sq)) {
                     ray_range_within_cone[0] = 0;
                 }
                 
                 // Scan cone intersections.
-                float2 cone_intersection_t = float2(-1, -1);
-                if(ray_ws.cone_intersection(position.xyz, cone_axis, sqr_cos_angle, cone_intersection_t)) {
-                    // Filter candidates : check if within the positive cone with sphere cap
-                    if(cone_intersection_t[0] >= 0) {
-                        const float3 intersection = ray_ws.position_at(cone_intersection_t[0]);
-                        if(dot(intersection - position.xyz, cone_axis) > 0 && within_sphere(intersection, position.xyz, sqr_light_range)) {
-                            ray_range_within_cone[0] = min(ray_range_within_cone[0], cone_intersection_t[0]);
-                            ray_range_within_cone[1] = max(ray_range_within_cone[1], cone_intersection_t[0]);
+                float2 cone_intersection_t;
+                if(ray_ws.cone_intersection(position.xyz, cone_axis, cos_angle_sq, cone_intersection_t)) {
+                    // Filter candidates : check if within the positive cone with sphere cap.
+                    // t[0] <= t[1], so do not check t[0] if t[1] < 0
+                    if(cone_intersection_t[1] >= 0) {
+                        if(cone_intersection_t[0] >= 0) {
+                            const float3 intersection = ray_ws.position_at(cone_intersection_t[0]);
+                            if(dot(intersection - position.xyz, cone_axis) > 0 && within_sphere(intersection, position.xyz, light_range_sq)) {
+                                ray_range_within_cone[0] = min(ray_range_within_cone[0], cone_intersection_t[0]);
+                                ray_range_within_cone[1] = max(ray_range_within_cone[1], cone_intersection_t[0]);
+                            }
+                        }
+                        {
+                            const float3 intersection = ray_ws.position_at(cone_intersection_t[1]);
+                            if(dot(intersection - position.xyz, cone_axis) > 0 && within_sphere(intersection, position.xyz, light_range_sq)) {
+                                ray_range_within_cone[0] = min(ray_range_within_cone[0], cone_intersection_t[1]);
+                                ray_range_within_cone[1] = max(ray_range_within_cone[1], cone_intersection_t[1]);
+                            }
                         }
                     }
-                    if(cone_intersection_t[1] >= 0) {
-                        const float3 intersection = ray_ws.position_at(cone_intersection_t[1]);
-                        if(dot(intersection - position.xyz, cone_axis) > 0 && within_sphere(intersection, position.xyz, sqr_light_range)) {
-                            ray_range_within_cone[0] = min(ray_range_within_cone[0], cone_intersection_t[1]);
-                            ray_range_within_cone[1] = max(ray_range_within_cone[1], cone_intersection_t[1]);
+                }
+
+                // Scan sphere caps
+                float2 sphere_intersection_t;
+                if(ray_ws.sphere_intersection(position.xyz, light_range_sq, sphere_intersection_t)) {
+                    // Filter candidates : check if within the positive cone with sphere cap.
+                    // t[0] <= t[1], so do not check t[0] if t[1] < 0
+                    if(sphere_intersection_t[1] >= 0) {
+                        if(sphere_intersection_t[0] >= 0 && within_positive_cone(ray_ws.position_at(sphere_intersection_t[0]), position.xyz, cone_axis, cos_angle_sq)) {
+                            ray_range_within_cone[0] = min(ray_range_within_cone[0], sphere_intersection_t[0]);
+                            ray_range_within_cone[1] = max(ray_range_within_cone[1], sphere_intersection_t[0]);
+                        }
+                        if(within_positive_cone(ray_ws.position_at(sphere_intersection_t[1]), position.xyz, cone_axis, cos_angle_sq)) {
+                            ray_range_within_cone[0] = min(ray_range_within_cone[0], sphere_intersection_t[1]);
+                            ray_range_within_cone[1] = max(ray_range_within_cone[1], sphere_intersection_t[1]);
                         }
                     }
                 }
