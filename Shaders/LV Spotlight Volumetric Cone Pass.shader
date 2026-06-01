@@ -3,7 +3,14 @@
 // Apply on a mesh that covers the entire area affected by the spot lights.
 // An easy option is a stretched unity cube.
 
-// TODO switch to depth reconstruction that works on quest
+// TODO list
+// - performance of tests : cone test first (0, 1, 2). camera test. if still 0 bail. On 0 ignore light
+// - fog model : add transmittance to have brightness when looking at light.
+// - fog model : add 3d noise on intensity ?
+// - fog model : better handle intsersection range. Light falloff should be stronger
+// - move camera in cone test late. If this is determinant, decrease effect ?
+// - support cookie version and try to use cookie at high mipmap for light color
+// - switch to depth reconstruction that works on quest
 
 Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
     Properties {
