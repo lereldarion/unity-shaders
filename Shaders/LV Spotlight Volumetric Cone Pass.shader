@@ -1,16 +1,36 @@
 // Made by Lereldarion (https://github.com/lereldarion/)
 
-// Apply on a mesh that covers the entire area affected by the spot lights.
-// An easy option is a stretched unity cube.
+// Add a volumetric fog effect on VRC light volume spotlights (https://github.com/REDSIM/VRCLightVolumes)
+// Visually, this shows the spotlight cones as if there was some fog.
+//
+// The effect is done in one screenspace drawcall. This drawcall is moderately expensive.
+// In situations where many spotlights overlap, this is cheaper than the VRSL strategy of emissive drawcalls on cone mesh.
+// And the FPS are more stable.
+//
+// Usage : configure your spotlights as VRC light volume spotlights.
+// Apply the shader on a mesh that covers the entire area affected by the spot lights (an easy option is a stretched unity cube).
+// Enable the *depth texture* if not already there (https://creators.vrchat.com/worlds/udon/vrc-graphics/vrc-camera-settings/).
+//
+// Using the internal faces of a mesh as support has 2 advantages:
+// - if far from the mesh, the effect covers only part of the screen, and is less GPU intensive.
+// - the mesh can use standard occlusion mecanism to be hidden entirely.
+//
+// The effect uses a simple fog model, and follows the PBR ideas when possible.
+// This means that it works best if the lights are configured correctly with respect to intensity and range.
+//
+// Limitations:
+// - This only supports analytical spotlights at the moment.
+// - The effect affects ALL light volume spotlights ! There is no nice way to only select a subset.
+// - Not Quest compatible due to the depth reconstruction ; but the performance cost is already high on PC, so quest seems like a bad idea.
 
 // TODO list
 // - performance of tests : cone test first (0, 1, 2). camera test. if still 0 bail. On 0 ignore light
-// - fog model : add transmittance to have brightness when looking at light.
+// - fog model : add transmittance to have brightness when looking at light. l0 only ?
 // - fog model : add 3d noise on intensity ?
 // - fog model : better handle intsersection range. Light falloff should be stronger
 // - move camera in cone test late. If this is determinant, decrease effect ?
 // - support cookie version and try to use cookie at high mipmap for light color
-// - switch to depth reconstruction that works on quest
+// - switch to depth reconstruction that works on quest ?
 
 Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
     Properties {
