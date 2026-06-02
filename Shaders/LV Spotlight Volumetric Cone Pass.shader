@@ -57,30 +57,17 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
 
             // unity_MatrixInvP is not provided in BIRP. unity_CameraInvProjection is only the basic camera projection (no VR components).
             // Using d4rkpl4y3r technique of patching unity_CameraInvProjection (https://gist.github.com/d4rkc0d3r/886be3b6c233349ea6f8b4a7fcdacab3)
-            // Use after instance id have been set ! UNITY_SETUP_INSTANCE_ID(input)
-            static float4x4 unity_birp_MatrixInvP;
-            static float4x4 unity_birp_MatrixInvMVP;
-            void setup_unity_birp_MatrixInvP() {
-                float4x4 flipZ = float4x4(1, 0, 0, 0,
-                                        0, 1, 0, 0,
-                                        0, 0, -1, 1,
-                                        0, 0, 0, 1);
-                float4x4 scaleZ = float4x4(1, 0, 0, 0,
-                                        0, 1, 0, 0,
-                                        0, 0, 2, -1,
-                                        0, 0, 0, 1);
+            float4 ClipToViewPos(float4 clipPos)
+            {
+                float4 normalizedClipPos = float4(clipPos.xyz / clipPos.w, 1);
+                normalizedClipPos.z = 1 - normalizedClipPos.z;
+                normalizedClipPos.z = normalizedClipPos.z * 2 - 1;
                 float4x4 invP = unity_CameraInvProjection;
-                float4x4 flipY = float4x4(1, 0, 0, 0,
-                                        0, _ProjectionParams.x, 0, 0,
-                                        0, 0, 1, 0,
-                                        0, 0, 0, 1);
-                float4x4 m = mul(scaleZ, flipZ);
-                m = mul(invP, m);
-                m = mul(flipY, m);
-                m._24 *= _ProjectionParams.x;
-                m._42 *= -1;
-                unity_birp_MatrixInvP = m;
-                unity_birp_MatrixInvMVP = mul(unity_WorldToObject, mul(unity_MatrixInvV, unity_birp_MatrixInvP));
+                invP._24 *= _ProjectionParams.x;
+                invP._42 *= -1;
+                float4 viewPos = mul(invP, normalizedClipPos);
+                viewPos.y *= _ProjectionParams.x;
+                return viewPos;
             }
 
             float3 position_vs_at_pixel(float2 pixel_position) {
@@ -92,7 +79,7 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
                 #ifdef UNITY_SINGLE_PASS_STEREO
                     clipPos.x -= 2 * unity_StereoEyeIndex;
                 #endif
-                float4 v = mul(unity_birp_MatrixInvP, float4(clipPos, raw, 1));
+                float4 v = ClipToViewPos(float4(clipPos, raw, 1));
                 return v.xyz / v.w;
             }
 
@@ -323,7 +310,6 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
                 output_color = half4(_Debug_Area.xxx * 0.5, 1);
 
                 // Compute scene depth for ray. Used to limit cone intersection ranges.
-                setup_unity_birp_MatrixInvP();
                 const float3 scene_vs = position_vs_at_pixel(input.position.xy);
                 const float3 scene_ws = mul(unity_MatrixInvV, float4(scene_vs, 1)).xyz;
                 const float depth = length(scene_ws - input.ray_ws.origin);
