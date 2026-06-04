@@ -21,14 +21,14 @@
 // Limitations:
 // - This only supports analytical spotlights at the moment.
 // - The effect affects ALL light volume spotlights ! There is no nice way to only select a subset.
+// - Maximum supported spotlight angle is 180 (half sphere). 
 // - Not Quest compatible due to the depth reconstruction ; but the performance cost is already high on PC, so quest seems like a bad idea.
 
 // TODO list
-// - performance of tests : cone test first (0, 1, 2). camera test. if still 0 bail. On 0 ignore light
 // - fog model : add transmittance to have brightness when looking at light. l0 only ?
 // - fog model : add 3d noise on intensity ?
 // - fog model : better handle intsersection range. Light falloff should be stronger
-// - move camera in cone test late. If this is determinant, decrease effect ?
+// - if camera within range decrease effect ?
 // - support cookie version and try to use cookie at high mipmap for light color
 // - switch to depth reconstruction that works on quest ?
 
@@ -107,16 +107,7 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
             // Geometry
 
             float length_sq(float3 v) { return dot(v, v); }
-
-            bool within_positive_cone(float3 p, float3 cone_origin, float3 cone_axis, float cos_angle_sq) {
-                const float3 v = p - cone_origin;
-                const float d = dot(v, cone_axis);
-                if(d <= 0) { return false; }
-                return d * d >= cos_angle_sq * length_sq(v);
-            }
-            bool within_sphere(float3 p, float3 sphere_origin, float sqr_radius) {
-                return length_sq(p - sphere_origin) <= sqr_radius;
-            }
+            static const float f32_infinity = asfloat(uint(0x7f800000));
 
             struct Ray {
                 // Ray defined by points p(t) = origin + direction * t
@@ -126,44 +117,79 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
                 void normalize() { direction = normalize(direction); }
                 float3 position_at(float t) { return origin + t * direction; }
 
-                // Intersection test functions. Require a normalized direction.
-                // Return true and set a pair of sorted `t` intersections points if there is an intersect.
-                bool cone_intersection(float3 cone_origin, float3 cone_axis, float cos_angle_sq, out float2 intersection_t);
-                bool sphere_intersection(float3 sphere_center, float sphere_radius_sq, out float2 intersection_t);
+                // Compute intersection with a positive cone with `cone_origin`, cone `angle`, normalized `axis`, with a sphere cap at `radius`.
+                // Angle must be less than 90 degrees. Ray must be normalized.
+                // Return a pair of sorted t values that intersect on success.
+                bool capped_cone_intersection(float3 cone_origin, float3 cone_axis, float cos_cone_angle, float cap_radius_sq, out float2 intersection_t);
             };
 
-            bool Ray::cone_intersection(float3 cone_origin, float3 cone_axis, float cos_angle_sq, out float2 intersection_t) {
+            bool Ray::capped_cone_intersection(float3 cone_origin, float3 cone_axis, float cos_cone_angle, float cap_radius_sq, out float2 intersection_t) {
+                // Useful intermediates. Abbreviations : co = cone_origin, ca = cone_axis, ro = ray origin, ra = ray axis.
+                const float cos_cone_angle_sq = cos_cone_angle * cos_cone_angle;
+                const float3 co_ro = origin - cone_origin;
+                const float dot_ca_ra = dot(cone_axis, direction);
+                const float dot_ca_coro = dot(cone_axis, co_ro);
+                const float dot_coro_ra = dot(co_ro, direction);
+                const float dot_coro_coro = dot(co_ro, co_ro);
+
+                // Compute intersection t candidates (><) for the ray as an infinite line  : 
+                // - sphere (  ) : 0 or 2 hits
+                // - symmetric infinite cone  ><  : 0 or 2 hits
+
                 // A point p is within positive cone if: dot(ca, p-co) >= length(p-co) cos(a)
                 // With ro = ray.origin, ra = normalize(ray.direction), do = ro-co :
                 // dot(ca, do) + t dot(ca, ra) >= length(do + t ra) cos(a)
                 // Squared: dot(ca, do)^2 + 2t dot(ca, ra) dot(ca, do) + t^2 dot(ca, ra)^2 >=
                 //          cos(a)^2 (dot(do, do) + 2t dot(do, ra) + t^2 dot(ra, ra))
-                // (for simplicity we normalize ray : dot(ra, ra) = 1)
-                const float3 d_origin = origin - cone_origin;
-                const float dot_ca_ra = dot(cone_axis, direction);
-                const float dot_ca_do = dot(cone_axis, d_origin);
-                const float dot_do_ra = dot(d_origin, direction);
-                const float dot_do_do = dot(d_origin, d_origin);
-                // Second order equation at^2 + bt + c >= 0
-                const float eqn_a = dot_ca_ra * dot_ca_ra - cos_angle_sq; // dot(ca, ra)^2 - cos(a)^2
-                const float eqn_b_2 = dot_ca_ra * dot_ca_do - cos_angle_sq * dot_do_ra; // 2 (dot(ca, ra) dot(ca, do) - cos(a)^2 dot(do, ra))
-                const float eqn_c = dot_ca_do * dot_ca_do - cos_angle_sq * dot_do_do; // dot(ca, do)^2 - cos(a)^2 dot(do, do)
-                // delta = b^2 - 4ac, solutions (-b +/- sqrt(delta)) / 2a
-                const float eqn_delta_4 = eqn_b_2 * eqn_b_2 - eqn_a * eqn_c;
-                if(eqn_delta_4 <= 0) { return false; } // Ignore edge case == 0
-                intersection_t = (-eqn_b_2 + float2(-1, 1) * sign(eqn_a) * sqrt(eqn_delta_4)) / eqn_a; // sign here sorts solutions in increasing order
-                return true;
-            }
+                // The squared version describe the symmetric cone.
+                //
+                // Second order equation at^2 + bt + c >= 0. Compute (a, b/2, c) in a vectorized way:
+                // a = dot(ca, ra)^2 - cos(a)^2 ; dot(ra, ra) = 1
+                // b / 2 =  dot(ca, ra) dot(ca, do) - cos(a)^2 dot(do, ra)
+                // c = dot(ca, do)^2 - cos(a)^2 dot(do, do)
+                const float3 cone_eqn_a_b2_c = float3(dot_ca_ra.xx, dot_ca_coro) * float3(dot_ca_ra, dot_ca_coro.xx) - cos_cone_angle_sq * float3(1, dot_coro_ra, dot_coro_coro);
+                // delta / 4 = (b / 2)^2 - ac, solutions (-b/2 +/- sqrt(delta/4)) / a
+                const float cone_eqn_delta_4 = cone_eqn_a_b2_c[1] * cone_eqn_a_b2_c[1] - cone_eqn_a_b2_c[0] * cone_eqn_a_b2_c[2];
 
-            bool Ray::sphere_intersection(float3 sphere_center, float sphere_radius_sq, out float2 intersection_t) {
-                // https://iquilezles.org/articles/intersectors/
-                const float3 oc = origin - sphere_center;
-                const float b = dot(oc, direction);
-                const float c = dot(oc, oc) - sphere_radius_sq;
-                const float h_sq = b * b - c;
-                if (h_sq < 0) { return false; }
-                intersection_t = -b + float2(-1, 1) * sqrt(h_sq);
-                return true;
+                // Sphere intersection https://iquilezles.org/articles/intersectors/
+                const float sphere_intersection_h_sq = cap_radius_sq - (dot_coro_coro - dot_coro_ra * dot_coro_ra);
+                //const float sphere_intersection_h_sq = cap_radius_sq - length_sq(co_ro - dot_coro_ra * direction);
+
+                // Early aborts scenarios :
+                // - No cone hit along the line => any sphere hit cannot be within the cone
+                // - No sphere hit along the line => any cone hit cannot be within the sphere
+                UNITY_BRANCH if (cone_eqn_delta_4 >= 0 && sphere_intersection_h_sq >= 0) {
+                    // Intersection raw solutions
+                    const float2 cone_intersection_t = (-cone_eqn_a_b2_c[1] + float2(-1, 1) * sqrt(cone_eqn_delta_4)) / cone_eqn_a_b2_c[0];
+                    const float2 sphere_intersection_t = -dot_coro_ra + float2(-1, 1) * sqrt(sphere_intersection_h_sq);
+                    const float4 all_intersection_t = float4(cone_intersection_t, sphere_intersection_t);
+
+                    // Filter solutions using the distance along the cone normal: dot(p - co, ca) = dot(ro + t ra - co, ca)
+                    // Assuming spotlight angle below 180 (all on the positive plane) :
+                    // Cone intersections are valid up to the sphere cap : dot distances [0, radius * cos_angle]
+                    // Sphere intersections are valid for the sphere cap : dot distances >= radius * cos_angle.
+                    // This is sufficient to eliminate all other unwanted intersections.
+                    const float4 cone_axis_distances = dot_ca_coro + all_intersection_t * dot_ca_ra;
+                    const bool4 is_positive_plane = cone_axis_distances >= 0;
+                    const float4 cone_axis_distances_sq = cone_axis_distances * cone_axis_distances;
+                    const float sphere_cap_threshold_sq = cap_radius_sq * cos_cone_angle_sq;
+                    const bool4 intersection_valid = is_positive_plane & bool4(cone_axis_distances_sq.xy <= sphere_cap_threshold_sq, cone_axis_distances_sq.zw >= sphere_cap_threshold_sq);
+
+                    // Find at least 2 valid intersections. Less than 2 is a global miss.
+                    // More than 2 is possible at edges of the cone, ignore.
+                    intersection_t = intersection_valid.xy ? all_intersection_t.xy : all_intersection_t.zw;
+                    bool2 valid = intersection_valid.xy | intersection_valid.zw;
+                    // intersection_t contains (x|z, y|w). This covers every sets of 2 valid values except xz and yw.
+                    // Try wz to reach (x|z|w, y|z|w), but only if it is not used twice (avoid returning zz or ww).
+                    const bool2 pick_wz = ~valid & intersection_valid.yx;
+                    intersection_t = pick_wz ? all_intersection_t.wz : intersection_t;
+                    valid = pick_wz ? intersection_valid.wz : valid;
+                    // Sort solutions
+                    intersection_t = intersection_t.x < intersection_t.y ? intersection_t : intersection_t.yx;
+                    return all(valid);
+                } else {
+                    return false;
+                }
             }
 
             ///////////////////////////////////////////////////////////////////////
@@ -190,101 +216,52 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
 
             void add_vrc_light_volume_light_contribution(uint light_id, Ray ray_ws, float scene_depth, inout half3 output) {
                 // Based on function LV_PointLight() in LightVolumes.cginc, to understand the metadata format and use
-
                 const float4 position = _UdonPointLightVolumePosition[light_id];
                 const float4 color = _UdonPointLightVolumeColor[light_id];
                 const float3 custom_id_data = _UdonPointLightVolumeCustomID[light_id];
-
                 const bool is_spotlight = position.w < 0;
                 
-                // customId > 0 => attenuation LUT
-                // customId = 0 => parametric attenuation
-                // customId < 0 => parametric attenuation + cookie
-                // Only the basic case is supported for now
+                // customId > 0 => attenuation LUT : unsupported
+                // customId = 0 => parametric attenuation : supported
+                // customId < 0 => parametric attenuation + cookie : unsupported TODO
                 UNITY_BRANCH if(!(is_spotlight && custom_id_data.x == 0 && length_sq(color.rgb) > 0)) { return; }
-                
-                const float4 direction_or_rotation = _UdonPointLightVolumeDirection[light_id];
 
-                const float3 cone_axis = direction_or_rotation.xyz;
+                // Nice name to parameters
+                const float4 direction_or_rotation = _UdonPointLightVolumeDirection[light_id];
+                const float3 cone_axis = direction_or_rotation.xyz; // Normalized already by LV
                 const float light_range_sq = custom_id_data.z; // Squared culling distance
                 const float cos_angle = color.w;
-                const float cos_angle_sq = cos_angle * cos_angle;
 
-                // We want the range of the ray within the spotlight cone to sample.
-                // We should have 0 <= x < y for a valid range. Start with an invalid one.
-                float2 ray_range_within_cone = float2(_ProjectionParams.z /* far plane */, -1);
+                // Overall strategy is to compute the range of the ray within the spotlight cone, and then compute lighting based on this range.
+                float2 ray_range_within_cone;
+                if(ray_ws.capped_cone_intersection(position.xyz, cone_axis, cos_angle, light_range_sq, ray_range_within_cone)) {
+                    ray_range_within_cone.x = max(ray_range_within_cone.x, 0); // Clamp to camera near plane
+                    ray_range_within_cone.y = min(ray_range_within_cone.y, scene_depth); // Limit to scene depth
+                    const float ray_range_within_cone_length = ray_range_within_cone.y - ray_range_within_cone.x;
 
-                // Check if camera is inside.
-                if(within_sphere(ray_ws.origin, position.xyz, light_range_sq) && within_positive_cone(ray_ws.origin, position.xyz, cone_axis, cos_angle_sq)) {
-                    ray_range_within_cone[0] = 0;
-                }
-                
-                // Scan cone intersections.
-                float2 cone_intersection_t;
-                if(ray_ws.cone_intersection(position.xyz, cone_axis, cos_angle_sq, cone_intersection_t)) {
-                    // Filter candidates : check if within the positive cone with sphere cap.
-                    // t[0] <= t[1], so do not check t[0] if t[1] < 0
-                    if(cone_intersection_t[1] >= 0) {
-                        if(cone_intersection_t[0] >= 0) {
-                            const float3 intersection = ray_ws.position_at(cone_intersection_t[0]);
-                            if(dot(intersection - position.xyz, cone_axis) > 0 && within_sphere(intersection, position.xyz, light_range_sq)) {
-                                ray_range_within_cone[0] = min(ray_range_within_cone[0], cone_intersection_t[0]);
-                                ray_range_within_cone[1] = max(ray_range_within_cone[1], cone_intersection_t[0]);
-                            }
-                        }
-                        {
-                            const float3 intersection = ray_ws.position_at(cone_intersection_t[1]);
-                            if(dot(intersection - position.xyz, cone_axis) > 0 && within_sphere(intersection, position.xyz, light_range_sq)) {
-                                ray_range_within_cone[0] = min(ray_range_within_cone[0], cone_intersection_t[1]);
-                                ray_range_within_cone[1] = max(ray_range_within_cone[1], cone_intersection_t[1]);
-                            }
-                        }
+                    UNITY_BRANCH if(ray_range_within_cone_length > 0) {
+                        // Prototype lighting
+                        const float3 sample_point = ray_ws.position_at(dot(0.5, ray_range_within_cone));
+        
+                        float3 dir = position.xyz - sample_point;
+                        float sqlen = max(dot(dir, dir), 1e-6);
+                        float3 dirN = dir * rsqrt(sqlen);
+                        float spotMask = dot(direction_or_rotation.xyz, -dirN) - cos_angle;
+                        float3 att = LV_PointLightAttenuation(sqlen, -position.w, color.rgb, light_range_sq);
+                        float smoothedCone = LV_Smoothstep01(saturate(spotMask * direction_or_rotation.w));
+                        float3 l0 = att * smoothedCone;
+                        float3 l1 = dirN * LV_PointLightSolidAngle(sqlen, (-position.w) * saturate(1 - cos_angle));
+                        float3 L1r = l0.r * l1;
+                        float3 L1g = l0.g * l1;
+                        float3 L1b = l0.b * l1;
+        
+                        // fake face at perfect angle to reflect light towards camera along its ray
+                        float3 fog_normal = normalize(dirN + (-ray_ws.direction));
+                        float3 sh_color = LightVolumeEvaluate(fog_normal, l0, L1r, L1g, L1b);
+                        output += _Fog_Density * sh_color * ray_range_within_cone_length;
+                        
+                        //output += _Fog_Density * color.rgb / max(color.r, max(color.g, color.b)); // DBG
                     }
-                }
-
-                // Scan sphere caps
-                float2 sphere_intersection_t;
-                if(ray_ws.sphere_intersection(position.xyz, light_range_sq, sphere_intersection_t)) {
-                    // Filter candidates : check if within the positive cone with sphere cap.
-                    // t[0] <= t[1], so do not check t[0] if t[1] < 0
-                    if(sphere_intersection_t[1] >= 0) {
-                        if(sphere_intersection_t[0] >= 0 && within_positive_cone(ray_ws.position_at(sphere_intersection_t[0]), position.xyz, cone_axis, cos_angle_sq)) {
-                            ray_range_within_cone[0] = min(ray_range_within_cone[0], sphere_intersection_t[0]);
-                            ray_range_within_cone[1] = max(ray_range_within_cone[1], sphere_intersection_t[0]);
-                        }
-                        if(within_positive_cone(ray_ws.position_at(sphere_intersection_t[1]), position.xyz, cone_axis, cos_angle_sq)) {
-                            ray_range_within_cone[0] = min(ray_range_within_cone[0], sphere_intersection_t[1]);
-                            ray_range_within_cone[1] = max(ray_range_within_cone[1], sphere_intersection_t[1]);
-                        }
-                    }
-                }
-
-                // Cut range at scene_depth. If no intersection happened this is still -1.
-                ray_range_within_cone[1] = min(ray_range_within_cone[1], scene_depth);
-                
-                if(ray_range_within_cone[1] > ray_range_within_cone[0]) {
-                    // Prototype lighting
-                    const float3 sample_point = ray_ws.position_at(dot(0.5, ray_range_within_cone));
-                    const float lit_length = ray_range_within_cone[1] - ray_range_within_cone[0];
-
-                    float3 dir = position.xyz - sample_point;
-                    float sqlen = max(dot(dir, dir), 1e-6);
-                    float3 dirN = dir * rsqrt(sqlen);
-                    float spotMask = dot(direction_or_rotation.xyz, -dirN) - cos_angle;
-                    float3 att = LV_PointLightAttenuation(sqlen, -position.w, color.rgb, light_range_sq);
-                    float smoothedCone = LV_Smoothstep01(saturate(spotMask * direction_or_rotation.w));
-                    float3 l0 = att * smoothedCone;
-                    float3 l1 = dirN * LV_PointLightSolidAngle(sqlen, (-position.w) * saturate(1 - cos_angle));
-                    float3 L1r = l0.r * l1;
-                    float3 L1g = l0.g * l1;
-                    float3 L1b = l0.b * l1;
-
-                    // fake face at perfect angle to reflect light towards camera along its ray
-                    float3 fog_normal = normalize(dirN + (-ray_ws.direction));
-                    float3 sh_color = LightVolumeEvaluate(fog_normal, l0, L1r, L1g, L1b);
-
-                    // output += _Fog_Density * color.rgb / max(color.r, max(color.g, color.b));
-                    output += _Fog_Density * sh_color * lit_length;
                 }
             }
 
