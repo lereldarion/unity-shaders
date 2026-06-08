@@ -25,16 +25,16 @@
 // - Not Quest compatible due to the depth reconstruction ; but the performance cost is already high on PC, so quest seems like a bad idea.
 
 // TODO list
-// - fog model : add transmittance to have brightness when looking at light. l0 only ?
+// - fog model : multi-sample with non-uniform split ?
 // - fog model : add 3d noise on intensity ?
-// - fog model : better handle intsersection range. Light falloff should be stronger
-// - if camera within range decrease effect ?
 // - support cookie version and try to use cookie at high mipmap for light color
 // - switch to depth reconstruction that works on quest ?
 
 Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
     Properties {
-        _Fog_Density("Fog density", Float) = 0.1
+        _Fog_Density("Fog density", Float) = 1
+        _Fog_Scattering_Asymmetry("Fog scattering asymmetry", Range(-1, 1)) = 0.8
+        [IntRange] _Fog_Sample_Count("Fog sample count", Range(1, 20)) = 3
         [ToggleUI] _Debug_Area("Debug area of effect", Float) = 0
     }
     SubShader {
@@ -67,6 +67,8 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
             #include "UnityCG.cginc"
 
             uniform float _Fog_Density;
+            uniform float _Fog_Scattering_Asymmetry;
+            uniform float _Fog_Sample_Count;
             uniform float _Debug_Area;
 
             ///////////////////////////////////////////////////////////////////////
@@ -209,9 +211,12 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
                 return saturate(sqrt(sqdist / (sqlightSize + sqdist)));
             }
             float LV_Smoothstep01(float x) { return x * x * (3 - 2 * x); }
-            float LV_EvaluateSH(float L0, float3 L1, float3 n) { return L0 + dot(L1, n); }
-            float3 LightVolumeEvaluate(float3 worldNormal, float3 L0, float3 L1r, float3 L1g, float3 L1b) {
-                return float3(LV_EvaluateSH(L0.r, L1r, worldNormal), LV_EvaluateSH(L0.g, L1g, worldNormal), LV_EvaluateSH(L0.b, L1b, worldNormal));
+
+            float henyey_greenstein_phase_function(float g, float cos_angle) {
+                // https://en.wikipedia.org/wiki/Henyey%E2%80%93Greenstein_phase_function
+                // g is the asymmetry factor, [-1, 1], usually in [0.7, 0.99] for fog
+                const float g2 = g * g;
+                return (1 - g2) / (4 * UNITY_PI) * pow(1 + g2 - 2 * g * cos_angle, -1.5); // div by (...)^(3/2)
             }
 
             void add_vrc_light_volume_light_contribution(uint light_id, Ray ray_ws, float scene_depth, inout half3 output) {
@@ -240,27 +245,28 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
                     const float ray_range_within_cone_length = ray_range_within_cone.y - ray_range_within_cone.x;
 
                     UNITY_BRANCH if(ray_range_within_cone_length > 0) {
-                        // Prototype lighting
-                        const float3 sample_point = ray_ws.position_at(dot(0.5, ray_range_within_cone));
-        
-                        float3 dir = position.xyz - sample_point;
-                        float sqlen = max(dot(dir, dir), 1e-6);
-                        float3 dirN = dir * rsqrt(sqlen);
-                        float spotMask = dot(direction_or_rotation.xyz, -dirN) - cos_angle;
-                        float3 att = LV_PointLightAttenuation(sqlen, -position.w, color.rgb, light_range_sq);
-                        float smoothedCone = LV_Smoothstep01(saturate(spotMask * direction_or_rotation.w));
-                        float3 l0 = att * smoothedCone;
-                        float3 l1 = dirN * LV_PointLightSolidAngle(sqlen, (-position.w) * saturate(1 - cos_angle));
-                        float3 L1r = l0.r * l1;
-                        float3 L1g = l0.g * l1;
-                        float3 L1b = l0.b * l1;
-        
-                        // fake face at perfect angle to reflect light towards camera along its ray
-                        float3 fog_normal = normalize(dirN + (-ray_ws.direction));
-                        float3 sh_color = LightVolumeEvaluate(fog_normal, l0, L1r, L1g, L1b);
-                        output += _Fog_Density * sh_color * ray_range_within_cone_length;
+
+                        const float ray_segment_length = ray_range_within_cone_length / _Fog_Sample_Count;
+                        float ray_sample_point = ray_range_within_cone.x + 0.5 * ray_segment_length;
                         
-                        //output += _Fog_Density * color.rgb / max(color.r, max(color.g, color.b)); // DBG
+                        for(float i = 0; i < _Fog_Sample_Count; i += 1) {
+                            const float3 sample_point = ray_ws.position_at(ray_sample_point);
+                            ray_sample_point += ray_segment_length;
+            
+                            float3 dir = position.xyz - sample_point;
+                            float sqlen = max(dot(dir, dir), 1e-6);
+                            float3 dirN = dir * rsqrt(sqlen);
+                            float spotMask = dot(direction_or_rotation.xyz, -dirN) - cos_angle;
+                            float3 att = LV_PointLightAttenuation(sqlen, -position.w, color.rgb, light_range_sq);
+                            float smoothedCone = LV_Smoothstep01(saturate(spotMask * direction_or_rotation.w));
+                            float3 l0 = att * smoothedCone;
+    
+                            // Evaluate lighting (l0 and l1) on dirN "normal" (main direction). Simplifies itself a lot.
+                            float3 lighting_at_dirN = l0 * (1 + LV_PointLightSolidAngle(sqlen, (-position.w) * saturate(1 - cos_angle)));
+    
+                            float scattering = henyey_greenstein_phase_function(_Fog_Scattering_Asymmetry, dot(ray_ws.direction, dirN));
+                            output += _Fog_Density * ray_segment_length * lighting_at_dirN * scattering;
+                        }
                     }
                 }
             }
