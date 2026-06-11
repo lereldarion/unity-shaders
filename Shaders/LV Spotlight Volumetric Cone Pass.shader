@@ -160,7 +160,7 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
                 // Early aborts scenarios :
                 // - No cone hit along the line => any sphere hit cannot be within the cone
                 // - No sphere hit along the line => any cone hit cannot be within the sphere
-                UNITY_BRANCH if (cone_eqn_delta_4 >= 0 && sphere_intersection_h_sq >= 0) {
+                UNITY_BRANCH if (cone_eqn_delta_4 > 0 && sphere_intersection_h_sq > 0) {
                     // Intersection raw solutions
                     const float2 cone_intersection_t = (-cone_eqn_a_b2_c[1] + float2(-1, 1) * sqrt(cone_eqn_delta_4)) / cone_eqn_a_b2_c[0];
                     const float2 sphere_intersection_t = -dot_coro_ra + float2(-1, 1) * sqrt(sphere_intersection_h_sq);
@@ -172,7 +172,7 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
                     // Sphere intersections are valid for the sphere cap : dot distances >= radius * cos_angle.
                     // This is sufficient to eliminate all other unwanted intersections.
                     const float4 cone_axis_distances = dot_ca_coro + all_intersection_t * dot_ca_ra;
-                    const bool4 is_positive_plane = cone_axis_distances >= 0;
+                    const bool4 is_positive_plane = cone_axis_distances > 0;
                     const float4 cone_axis_distances_sq = cone_axis_distances * cone_axis_distances;
                     const float sphere_cap_threshold_sq = cap_radius_sq * cos_cone_angle_sq;
                     const bool4 intersection_valid = is_positive_plane & bool4(cone_axis_distances_sq.xy <= sphere_cap_threshold_sq, cone_axis_distances_sq.zw >= sphere_cap_threshold_sq);
@@ -233,6 +233,7 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
 
                 // Nice name to parameters
                 const float4 direction_or_rotation = _UdonPointLightVolumeDirection[light_id];
+                const float3 cone_origin = position.xyz;
                 const float3 cone_axis = direction_or_rotation.xyz; // Normalized already by LV
                 const float light_range_sq = custom_id_data.z; // Squared culling distance
                 const float cos_angle = color.w;
@@ -253,10 +254,10 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
                             const float3 sample_point = ray_ws.position_at(ray_sample_point);
                             ray_sample_point += ray_segment_length;
             
-                            float3 dir = position.xyz - sample_point;
+                            float3 dir = cone_origin - sample_point;
                             float sqlen = max(dot(dir, dir), 1e-6);
                             float3 dirN = dir * rsqrt(sqlen);
-                            float spotMask = dot(direction_or_rotation.xyz, -dirN) - cos_angle;
+                            float spotMask = dot(cone_axis, -dirN) - cos_angle;
                             float3 att = LV_PointLightAttenuation(sqlen, -position.w, color.rgb, light_range_sq);
                             float smoothedCone = LV_Smoothstep01(saturate(spotMask * direction_or_rotation.w));
                             float3 l0 = att * smoothedCone;
