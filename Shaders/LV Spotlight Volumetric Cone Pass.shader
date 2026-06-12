@@ -34,7 +34,8 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
     Properties {
         _Fog_Density("Fog density", Float) = 1
         _Fog_Scattering_Asymmetry("Fog scattering asymmetry", Range(-1, 1)) = 0.8
-        [IntRange] _Fog_Sample_Count("Fog sample count", Range(1, 20)) = 3
+        [IntRange] _Fog_Sample_Count("Fog sample count", Range(3, 20)) = 3
+        [KeywordEnum(Linear, Near Bias)] _Fog_Sampling_Distribution("Fog sample distribution", Float) = 1
         [ToggleUI] _Debug_Area("Debug area of effect", Float) = 0
     }
     SubShader {
@@ -43,7 +44,6 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
             "RenderType" = "Overlay"
             "PreviewType" = "Plane"
             "IgnoreProjector" = "True"
-            "DisableBatching" = "True"
         }
         
         // Screenspace pass
@@ -60,6 +60,7 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
 
             #pragma target 5.0
             #pragma multi_compile_instancing
+            #pragma shader_feature_local _FOG_SAMPLING_DISTRIBUTION_LINEAR _FOG_SAMPLING_DISTRIBUTION_NEAR_BIAS
             
             #pragma vertex vertex_stage
             #pragma fragment fragment_stage
@@ -68,7 +69,7 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
 
             uniform float _Fog_Density;
             uniform float _Fog_Scattering_Asymmetry;
-            uniform float _Fog_Sample_Count;
+            uniform uint _Fog_Sample_Count;
             uniform float _Debug_Area;
 
             ///////////////////////////////////////////////////////////////////////
@@ -166,7 +167,7 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
                     const float2 sphere_intersection_t = -dot_coro_ra + float2(-1, 1) * sqrt(sphere_intersection_h_sq);
                     const float4 all_intersection_t = float4(cone_intersection_t, sphere_intersection_t);
 
-                    // Filter solutions using the distance along the cone normal: dot(p - co, ca) = dot(ro + t ra - co, ca)
+                    // Filter solutions using the distance along the cone normal: dot(p - co, ca) = dot(ro + t ra - co, ca) = dot(ro-co, ca) + t * dot(ra, ca)
                     // Assuming spotlight angle below 180 (all on the positive plane) :
                     // Cone intersections are valid up to the sphere cap : dot distances [0, radius * cos_angle]
                     // Sphere intersections are valid for the sphere cap : dot distances >= radius * cos_angle.
@@ -246,15 +247,28 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
                     const float ray_range_within_cone_length = ray_range_within_cone.y - ray_range_within_cone.x;
 
                     UNITY_BRANCH if(ray_range_within_cone_length > 0) {
-
-                        const float ray_segment_length = ray_range_within_cone_length / _Fog_Sample_Count;
-                        float ray_sample_point = ray_range_within_cone.x + 0.5 * ray_segment_length;
+                        // Sample lighting along the ray-cone intersection length, which is split into segments (chunks).
+                        // It is better to sample more close to the light (large lighting gradient) than far from it.
+                        // Introduce a bias to chunk lengths : they are proportionally sized to the lerp of the light-distance of each ray intersection bound.
+                        // Also provide a fallback to use purely linear sampling (equal length chunks).
+                        #if defined(_FOG_SAMPLING_DISTRIBUTION_LINEAR)
+                        const float2 light_distances = float2(1, 1); // Dummy equal values
+                        #elif defined(_FOG_SAMPLING_DISTRIBUTION_NEAR_BIAS)
+                        const float2 light_distances = dot(cone_axis, ray_ws.origin - cone_origin) + ray_range_within_cone * dot(cone_axis, ray_ws.direction);
+                        #endif
+                        const float2 ray_chunk_length_factors = ray_range_within_cone_length * 2 * float2(
+                            light_distances.x,
+                            (light_distances.y - light_distances.x) / (_Fog_Sample_Count - 1)
+                        ) / (_Fog_Sample_Count * (light_distances.x + light_distances.y));
                         
-                        for(float i = 0; i < _Fog_Sample_Count; i += 1) {
-                            const float3 sample_point = ray_ws.position_at(ray_sample_point);
-                            ray_sample_point += ray_segment_length;
-            
-                            float3 dir = cone_origin - sample_point;
+                        float ray_t = ray_range_within_cone.x;
+                        for(uint i = 0; i < _Fog_Sample_Count; i += 1) {
+                            // Sample the next segment at the middle
+                            const float ray_chunk_length = ray_chunk_length_factors.x + i * ray_chunk_length_factors.y;
+                            const float3 sample_position = ray_ws.position_at(ray_t + 0.5 * ray_chunk_length);
+                            ray_t += ray_chunk_length;
+                            
+                            float3 dir = cone_origin - sample_position;
                             float sqlen = max(dot(dir, dir), 1e-6);
                             float3 dirN = dir * rsqrt(sqlen);
                             float spotMask = dot(cone_axis, -dirN) - cos_angle;
@@ -266,7 +280,7 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
                             float3 lighting_at_dirN = l0 * (1 + LV_PointLightSolidAngle(sqlen, (-position.w) * saturate(1 - cos_angle)));
     
                             float scattering = henyey_greenstein_phase_function(_Fog_Scattering_Asymmetry, dot(ray_ws.direction, dirN));
-                            output += _Fog_Density * ray_segment_length * lighting_at_dirN * scattering;
+                            output += _Fog_Density * ray_chunk_length * lighting_at_dirN * scattering;
                         }
                     }
                 }
