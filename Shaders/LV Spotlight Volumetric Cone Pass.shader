@@ -25,16 +25,16 @@
 // - Not Quest compatible due to the depth reconstruction ; but the performance cost is already high on PC, so quest seems like a bad idea.
 
 // TODO list
-// - fog model : multi-sample with non-uniform split ?
 // - fog model : add 3d noise on intensity ?
+// - fog model : density gradient with distance ?
 // - support cookie version and try to use cookie at high mipmap for light color
 // - switch to depth reconstruction that works on quest ?
 
 Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
     Properties {
-        _Fog_Density("Fog density", Float) = 1
+        _Fog_Density("Fog density", Float) = 0.1
         _Fog_Scattering_Asymmetry("Fog scattering asymmetry", Range(-1, 1)) = 0.8
-        [IntRange] _Fog_Sample_Count("Fog sample count", Range(3, 20)) = 3
+        [IntRange] _Fog_Sample_Count("Fog sample count", Range(2, 20)) = 3
         [KeywordEnum(Linear, Near Bias)] _Fog_Sampling_Distribution("Fog sample distribution", Float) = 1
         [ToggleUI] _Debug_Area("Debug area of effect", Float) = 0
     }
@@ -274,13 +274,14 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
                             float spotMask = dot(cone_axis, -dirN) - cos_angle;
                             float3 att = LV_PointLightAttenuation(sqlen, -position.w, color.rgb, light_range_sq);
                             float smoothedCone = LV_Smoothstep01(saturate(spotMask * direction_or_rotation.w));
-                            float3 l0 = att * smoothedCone;
-    
-                            // Evaluate lighting (l0 and l1) on dirN "normal" (main direction). Simplifies itself a lot.
-                            float3 lighting_at_dirN = l0 * (1 + LV_PointLightSolidAngle(sqlen, (-position.w) * saturate(1 - cos_angle)));
-    
+                            float3 l0 = att * smoothedCone; // Independent of direction
+
+                            // Evaluate directional lighting (l1) on dirN "normal" (main direction). Simplifies itself a lot.
+                            float3 l1_on_dirN = l0 * LV_PointLightSolidAngle(sqlen, (-position.w) * saturate(1 - cos_angle));    
                             float scattering = henyey_greenstein_phase_function(_Fog_Scattering_Asymmetry, dot(ray_ws.direction, dirN));
-                            output += _Fog_Density * ray_chunk_length * lighting_at_dirN * scattering;
+                            float3 lighting_along_ray = l0 + scattering * l1_on_dirN;
+
+                            output += _Fog_Density * ray_chunk_length * lighting_along_ray;
                         }
                     }
                 }
