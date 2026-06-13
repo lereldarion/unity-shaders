@@ -193,6 +193,7 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
                     intersection_t = intersection_t.x < intersection_t.y ? intersection_t : intersection_t.yx;
                     return all(valid);
                 } else {
+                    intersection_t = 0; // Just to calm the compiler
                     return false;
                 }
             }
