@@ -15,28 +15,29 @@
 // - if far from the mesh, the effect covers only part of the screen, and is less GPU intensive.
 // - the mesh can use standard occlusion mecanism to be hidden entirely.
 //
-// The effect uses a simple fog model, and follows the PBR ideas when possible.
-// This means that it works best if the lights are configured correctly with respect to intensity and range.
+// The effect uses a simple fog model (Henyey-Greenstein scattering) which takes the light volume configuration as input.
+// It works best if the lights are configured correctly with respect to intensity and range.
+// Supported: spotlights either analytical or with cookie.
+// Cookie spotlights textures should only use the 1-uv-diameter disk part of the uv square, as the corners outside of the disk are not included in the volumetric effect.
 //
 // Limitations:
-// - This only supports analytical spotlights at the moment.
 // - The effect affects ALL light volume spotlights ! There is no nice way to only select a subset.
 // - Maximum supported spotlight angle is 180 (half sphere). 
 // - Not Quest compatible due to the depth reconstruction ; but the performance cost is already high on PC, so quest seems like a bad idea.
+// - Spotlight with cookies: VRCLV does not enable mipmaps on the PointLightVolumeArray Texture2D ; it must be enabled manually with a script for a better effect.
 
 // TODO list
 // - fog model : add 3d noise on intensity ?
 // - fog model : density gradient with distance ?
-// - support cookie version and try to use cookie at high mipmap for light color
-// - switch to depth reconstruction that works on quest ?
 
 Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
     Properties {
         _Fog_Density("Fog density", Float) = 0.1
         _Fog_Scattering_Asymmetry("Fog scattering asymmetry", Range(-1, 1)) = 0.8
-        [IntRange] _Fog_Sample_Count("Fog sample count", Range(2, 20)) = 3
+        [IntRange] _Fog_Sample_Count("Fog sample count (expensive)", Range(2, 20)) = 3
         [KeywordEnum(Linear, Near Bias)] _Fog_Sampling_Distribution("Fog sample distribution", Float) = 1
-        [ToggleUI] _Debug_Area("Debug area of effect", Float) = 0
+        [IntRange] _Cookie_Mip("Mip for spotlight with cookie", Range(0, 16)) = 3
+        [ToggleUI] _Debug_Area("Show area of effect (debug)", Float) = 0
     }
     SubShader {
         Tags {
@@ -70,6 +71,7 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
             uniform float _Fog_Density;
             uniform float _Fog_Scattering_Asymmetry;
             uniform uint _Fog_Sample_Count;
+            uniform float _Cookie_Mip;
             uniform float _Debug_Area;
 
             ///////////////////////////////////////////////////////////////////////
@@ -203,7 +205,14 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
             uniform float4 _UdonPointLightVolumeColor[128]; // XYZ = Color. W = Cos of angle for LUT (point light) | Cos of outer angle if no custom texture, tan of outer angle otherwise (spot light) | 2 + Height (area light) 
             uniform float4 _UdonPointLightVolumeDirection[128]; // Rotation quaternion (point light, area light, cookie spot light) | XYZ direction + W cone falloff (analytic spot light)
             uniform float3 _UdonPointLightVolumeCustomID[128]; // X = 0 if analytic, -cookie_ID, or +custom_lut_ID. Y shadow mask id. Z squared culling distance.
+            uniform float _UdonPointLightVolumeCubeCount; // Cubemaps count in the custom textures array
+            uniform Texture2DArray _UdonPointLightVolumeTexture; // First elements must be cubemap faces (6 face textures per cubemap). Then goes other textures
+            uniform SamplerState sampler_UdonPointLightVolumeTexture;
 
+            float3 LV_MultiplyVectorByQuaternion(float3 v, float4 q) {
+                float3 t = 2.0 * cross(q.xyz, v);
+                return v + q.w * t + cross(q.xyz, t);
+            }
             float3 LV_PointLightAttenuation(float sqdist, float sqlightSize, float3 color, float sqMaxDist) {
                 float mask = saturate(1 - sqdist / sqMaxDist);
                 return mask * mask * color * sqlightSize / (sqdist + sqlightSize);
@@ -225,19 +234,29 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
                 const float4 position = _UdonPointLightVolumePosition[light_id];
                 const float4 color = _UdonPointLightVolumeColor[light_id];
                 const float3 custom_id_data = _UdonPointLightVolumeCustomID[light_id];
+                const int custom_id = custom_id_data.x;
                 const bool is_spotlight = position.w < 0;
                 
                 // customId > 0 => attenuation LUT : unsupported
                 // customId = 0 => parametric attenuation : supported
-                // customId < 0 => parametric attenuation + cookie : unsupported TODO
-                UNITY_BRANCH if(!(is_spotlight && custom_id_data.x == 0 && length_sq(color.rgb) > 0)) { return; }
-
+                // customId < 0 => parametric attenuation + cookie : supported
+                UNITY_BRANCH if(!(is_spotlight && custom_id <= 0 && length_sq(color.rgb) > 0)) { return; }
+                
                 // Nice name to parameters
-                const float4 direction_or_rotation = _UdonPointLightVolumeDirection[light_id];
+                const float4 direction_or_quaternion = _UdonPointLightVolumeDirection[light_id];
+                const bool has_cookie = custom_id < 0;
                 const float3 cone_origin = position.xyz;
-                const float3 cone_axis = direction_or_rotation.xyz; // Normalized already by LV
                 const float light_range_sq = custom_id_data.z; // Squared culling distance
-                const float cos_angle = color.w;
+
+                float3 cone_axis;
+                float cos_angle;
+                UNITY_BRANCH if(has_cookie) {
+                    cone_axis = LV_MultiplyVectorByQuaternion(float3(0, 0, 1), float4((-1).xxx, 1) * direction_or_quaternion);
+                    cos_angle = saturate(rsqrt(1 + color.w * color.w)); // color.w is tan angle
+                } else {
+                    cone_axis = direction_or_quaternion.xyz; // Normalized already by LV
+                    cos_angle = color.w;
+                }
 
                 // Overall strategy is to compute the range of the ray within the spotlight cone, and then compute lighting based on this range.
                 float2 ray_range_within_cone;
@@ -268,16 +287,31 @@ Shader "Lereldarion/LV Spotlight Volumetric Cone Pass" {
                             const float3 sample_position = ray_ws.position_at(ray_t + 0.5 * ray_chunk_length);
                             ray_t += ray_chunk_length;
                             
+                            // Light volume spotlight lighting code, restructured
                             float3 dir = cone_origin - sample_position;
                             float sqlen = max(dot(dir, dir), 1e-6);
                             float3 dirN = dir * rsqrt(sqlen);
-                            float spotMask = dot(cone_axis, -dirN) - cos_angle;
                             float3 att = LV_PointLightAttenuation(sqlen, -position.w, color.rgb, light_range_sq);
-                            float smoothedCone = LV_Smoothstep01(saturate(spotMask * direction_or_rotation.w));
-                            float3 l0 = att * smoothedCone; // Independent of direction
+
+                            float3 l0; // Independent of direction
+                            UNITY_BRANCH if(has_cookie) {
+                                // LV_SphereSpotLightCookie
+                                float3 localDir = LV_MultiplyVectorByQuaternion(-dirN, direction_or_quaternion);
+                                float2 uv = localDir.xy * rcp(localDir.z * color.w /* tan angle */);
+                                uint id = (uint) _UdonPointLightVolumeCubeCount * 5 - custom_id - 1;
+                                float3 uvid = float3(uv * 0.5 + 0.5, id);        
+                                float4 cookie = _UdonPointLightVolumeTexture.SampleLevel(sampler_UdonPointLightVolumeTexture, uvid, _Cookie_Mip);
+                                l0 = att * cookie.rgb * cookie.a;
+                            } else {
+                                // LV_SphereSpotLight
+                                float spotMask = dot(cone_axis, -dirN) - cos_angle;
+                                float smoothedCone = LV_Smoothstep01(saturate(spotMask * direction_or_quaternion.w));
+                                l0 = att * smoothedCone;
+                            }
 
                             // Evaluate directional lighting (l1) on dirN "normal" (main direction). Simplifies itself a lot.
-                            float3 l1_on_dirN = l0 * LV_PointLightSolidAngle(sqlen, (-position.w) * saturate(1 - cos_angle));    
+                            float3 l1_on_dirN = l0 * LV_PointLightSolidAngle(sqlen, (-position.w) * saturate(1 - cos_angle));
+
                             float scattering = henyey_greenstein_phase_function(_Fog_Scattering_Asymmetry, dot(ray_ws.direction, dirN));
                             float3 lighting_along_ray = l0 + scattering * l1_on_dirN;
 
