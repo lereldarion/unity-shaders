@@ -49,7 +49,7 @@ Shader "Lereldarion/Overlay/HUD" {
             
             #include "UnityCG.cginc"
             #include "UnityStandardParticleInstancing.cginc"
-            #include "common.hlsl"
+            #include "overlay_common.hlsl"
 
             uniform fixed4 _Color;
             uniform float _UI_Position_Radius;

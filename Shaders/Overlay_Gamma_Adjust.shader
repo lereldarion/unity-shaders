@@ -49,7 +49,7 @@ Shader "Lereldarion/Overlay/Gamma Adjust" {
             
             #include "UnityCG.cginc"
             #include "UnityStandardParticleInstancing.cginc"
-            #include "common.hlsl"
+            #include "overlay_common.hlsl"
 
             struct VertexInput {
                 float3 position_os : POSITION;
