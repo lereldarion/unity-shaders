@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## 2.0.0
 - HUD : improve UI layout and provide size configuration. Use asin to reduce compass angle errors.
 - Overlays : replace `_Overlay_Fullscreen` boolean by `_Overlay_Mode` enum. Now supports 3 modes : mesh surface, fullscreen, and billboard fake sphere. Billboard sphere simulate a sphere from a flat surface with uvs (like unity quad).
 - Overlays : Improved the vertex order fix (slider, 3 options).
