@@ -10,9 +10,9 @@ Install :
 [Github repository](https://github.com/lereldarion/unity-shaders/) in case you found this documentation from an installed package.
 
 ### TODO
-- v2 release
 - udon videotex debug ?
 - audio frequency-time plot with CRT
+- fps plot on HUD ; reuses audiolink CRT ?
 
 ## Overlays
 These overlay shaders are useful on avatars for world analysis (Wireframe, Normals, Grid, HUD), adjusting lighting (Gamma Adjust), debugging lights (Debug Lighting).
@@ -21,7 +21,9 @@ All overlays have multiple modes, statically selected by `_Overlay_Mode` propert
 - `Mesh` : applied on the mesh
 - `Fullscreen` : applied as a screenspace shader (fullscreen). Has a dynamic toggle between fullscreen and mesh.
 - `Billboard Sphere` : emulate a sphere mesh, with fullscreen when camera is inside.
-  Support mesh **must** be a flat surface with uniform normal. The sphere is defined by `UV0` : center at `(0.5, 0.5)`, radius `0.5`. Example of valid mesh : unity quad.
+  Support mesh **must** be a flat surface with uniform normal. The sphere is defined by `UV0` : center at `(0.5, 0.5)`, radius `0.5`.
+  Renderer object space 0 must be at the center of the object defined by UVs (no batching).
+  Example of valid mesh : unity quad. Also make the culling bounds a cube to prevent it from being culled.
 
 If you use a fullscreen mode, it is good practice to only animate the fullscreen toggle **locally** (`IsLocal` VRChat parameter) to avoid annoying others.
 Fullscreen mode uses [VRChat shader globals](https://creators.vrchat.com/worlds/udon/vrc-graphics/vrchat-shader-globals/) to ignore mirror (always) and secondary cameras (toggle).
@@ -41,7 +43,7 @@ Overlays with a solid color also support border dissolve to appear less artifici
   Using a negative transition width dissolves at the center instead of the sides.
   Works for all 3 overlay modes, but inverted billboard sphere is not great.
 - `Trail` mode applies the dissolve along the UV y dimension, useful for `TrailRenderer` sides.
-  Use with `Mesh` overlay mode. Set the `TrailRenderer` `Texture Mode` to `Static`.
+  Use with `Mesh` overlay mode. Set the `TrailRenderer` `Texture Mode` to `Static` for UVs that stay immobile in world space, and make `Texture Scale = 1/width` to make the UVs have identical axis scales.
   Sadly adding a dissolve on trail ends is likely not possible ; unity does not provide the information to the shader in trail renderer, and particle trails do not have the right behavior when stopping trail emission.
 
 ![](.github/overlay_modes.jpg)

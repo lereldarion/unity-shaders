@@ -7,8 +7,8 @@ Material:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: Lereldarion_Debug_Lighting
-  m_Shader: {fileID: 4800000, guid: f300bb2b0a90944458e6b001dcd5e736, type: 3}
+  m_Name: Demo_Lereldarion_Debug_TBN
+  m_Shader: {fileID: 4800000, guid: 6c6206c8fafee264da06d9b0ca2395e5, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
   m_ValidKeywords: []
@@ -25,13 +25,7 @@ Material:
     m_TexEnvs: []
     m_Ints: []
     m_Floats:
-    - _Anchor_Mode: 0
-    - _Directional_Light_Arrow_Length: 0.5
-    - _Distance_Limit: 10
-    - _LightProbe_Radius: 0.05
-    - _Light_Radius: 0.2
-    - _Minimum_Gizmo_To_Range_Ratio: 0.5
-    - _ReflectionProbe_Radius: 0.2
-    m_Colors:
-    - _Anchor_ViewSpace_Displacement: {r: 0, g: 0, b: 0, a: 0}
+    - _DisplayMeshBinormal: 0
+    - _Display_Length_Fraction: 0.5
+    m_Colors: []
   m_BuildTextureStacks: []

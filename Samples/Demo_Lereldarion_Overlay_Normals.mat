@@ -7,8 +7,8 @@ Material:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: Lereldarion_Overlay_Wireframe
-  m_Shader: {fileID: 4800000, guid: d3ab93cb7567be04093abc27fe32cda1, type: 3}
+  m_Name: Demo_Lereldarion_Overlay_Normals
+  m_Shader: {fileID: 4800000, guid: 6860e55d93439e549bb54fe6379c9b11, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
   m_ValidKeywords:

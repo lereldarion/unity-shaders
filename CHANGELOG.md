@@ -10,6 +10,7 @@
 - HUD : added reticle alignment options : mesh normals or camera, separate for mesh view and fullscreen view.
 - Lighting Debug : Added selectable anchor mode. Added directional light gizmo size. Added way to disable distance check.
 - Added lighting debug **overlay**
+- Renamed Demo materials with `Demo_` prefix to discourage use
 
 ## 1.4.1 - 08/02/2026
 - Grid : remove broken grid for infnite distance (skybox)

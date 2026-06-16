@@ -7,11 +7,12 @@ Material:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: Lereldarion_Debug_TBN
-  m_Shader: {fileID: 4800000, guid: 6c6206c8fafee264da06d9b0ca2395e5, type: 3}
+  m_Name: Demo_Lereldarion_Overlay_Grid
+  m_Shader: {fileID: 4800000, guid: 4155e75ff16305b42ad3357997b81844, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
-  m_ValidKeywords: []
+  m_ValidKeywords:
+  - _OVERLAY_MODE_MESH
   m_InvalidKeywords: []
   m_LightmapFlags: 4
   m_EnableInstancingVariants: 1
@@ -25,7 +26,11 @@ Material:
     m_TexEnvs: []
     m_Ints: []
     m_Floats:
-    - _DisplayMeshBinormal: 0
-    - _Display_Length_Fraction: 0.5
+    - _Grid_Line_Width_01: 0.02
+    - _Grid_Size_Meters: 1
+    - _Overlay_Fullscreen_Only_Main_Camera: 1
+    - _Overlay_Fullscreen_Vertex_Order: 0
+    - _Overlay_Mode: 0
+    - _Overlay_Sphere_Filled: 1
     m_Colors: []
   m_BuildTextureStacks: []
