@@ -34,7 +34,7 @@ Shader "Lereldarion/Overlay/Debug Lighting" {
             "VRCFallback" = "Hidden"
             "PreviewType" = "Plane"
             "IgnoreProjector" = "True"
-            "DisableBatching" = "True" // For Billboard sphere mode only
+            "DisableBatching" = "True" // Billboard sphere mode needs object center
         }
 
         // _Distance_Limit is undefined, defaults to 0, and disables the distance limit.

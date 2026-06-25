@@ -24,6 +24,9 @@ All overlays have multiple modes, statically selected by `_Overlay_Mode` propert
   Support mesh **must** be a flat surface with uniform normal. The sphere is defined by `UV0` : center at `(0.5, 0.5)`, radius `0.5`.
   Renderer object space 0 must be at the center of the object defined by UVs (no batching).
   Example of valid mesh : unity quad. Also make the culling bounds a cube to prevent it from being culled.
+- `Trail` : applied to a trail renderer. Only defined for overlays where it differs from `Mesh` mode. Changes from `Mesh` mode :
+  - Radial dissolve is applied along the UV y dimension. For homogeneous scaling, set the `TrailRenderer` `Texture Mode` to `Static` for UVs that stay immobile in world space, and make `Texture Scale = 1/width` to make the UVs have identical axis scales.
+    Sadly adding a dissolve on trail ends is likely not possible ; unity does not provide the information to the shader in trail renderer, and particle trails do not have the right behavior when stopping trail emission.
 
 If you use a fullscreen mode, it is good practice to only animate the fullscreen toggle **locally** (`IsLocal` VRChat parameter) to avoid annoying others.
 Fullscreen mode uses [VRChat shader globals](https://creators.vrchat.com/worlds/udon/vrc-graphics/vrchat-shader-globals/) to ignore mirror (always) and secondary cameras (toggle).
@@ -38,13 +41,11 @@ Non uniform scaling can transform the sphere into an ellipsoid.
 Using a very small scale on one axis will emulate a disc (flattened ellipsoid).
 
 Overlays with a solid color also support border dissolve to appear less artificial :
+- `None` : no dissolve
 - `Radial` dissolve mode makes the overlay dissolve radially from the UV `(0.5, 0.5)` point.
   Direction, speed, noise scale, and transition scale and position can be selected.
   Using a negative transition width dissolves at the center instead of the sides.
-  Works for all 3 overlay modes, but inverted billboard sphere is not great.
-- `Trail` mode applies the dissolve along the UV y dimension, useful for `TrailRenderer` sides.
-  Use with `Mesh` overlay mode. Set the `TrailRenderer` `Texture Mode` to `Static` for UVs that stay immobile in world space, and make `Texture Scale = 1/width` to make the UVs have identical axis scales.
-  Sadly adding a dissolve on trail ends is likely not possible ; unity does not provide the information to the shader in trail renderer, and particle trails do not have the right behavior when stopping trail emission.
+  Works for all overlay modes, but inverted billboard sphere is not great.
 
 ![](.github/overlay_modes.jpg)
 
@@ -94,6 +95,7 @@ If you align with mesh normals, ensure that they are the same direction on the e
 This works well on a simple quad.
 For more complex geometries, you must ensure that all triangles have the same normal vectors ; this can be done with custom normals in blender.
 In `Billboard Sphere` mode, the reticle is aligned with the sphere center, or camera if inside the sphere.
+No specific `Trail` mode ; use `Mesh` mode with `Camera` reticle direction, as the normals are not specified.
 
 This shader uses a small internal texture for the font (MSDF strategy).
 

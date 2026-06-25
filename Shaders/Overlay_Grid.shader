@@ -28,7 +28,7 @@ Shader "Lereldarion/Overlay/Grid" {
             "VRCFallback" = "Hidden"
             "PreviewType" = "Plane"
             "IgnoreProjector" = "True"
-            "DisableBatching" = "True" // For Billboard sphere mode only
+            "DisableBatching" = "True" // Billboard sphere mode needs object center
         }
         
         Cull Off

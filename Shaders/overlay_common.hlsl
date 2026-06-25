@@ -72,10 +72,12 @@ void setup_unity_birp_MatrixInvP() {
 // - Mesh : simply apply on the input mesh
 // - Fullscreen : apply the overlay as fullscreen, depending on vrchat camera config
 // - Billboard sphere : impostor sphere ar object origin, using the mesh as a billboard. When inside the fake sphere go in fullscreen.
+// - Trail : applied to a trail renderer. Similar to Mesh but can change details like radial dissolve shape, or HUD direction
 //
 // These modes are selected by multi_compile macros :
-// - overall shape : _OVERLAY_MODE_MESH _OVERLAY_MODE_FULLSCREEN _OVERLAY_MODE_BILLBOARD_SPHERE
-// - border dissolve : _OVERLAY_BORDER_DISSOLVE_NONE _OVERLAY_BORDER_DISSOLVE_RADIAL _OVERLAY_BORDER_DISSOLVE_TRAIL
+// - overall shape : _OVERLAY_MODE_MESH _OVERLAY_MODE_FULLSCREEN _OVERLAY_MODE_BILLBOARD_SPHERE _OVERLAY_MODE_TRAIL
+// - border dissolve : _OVERLAY_BORDER_DISSOLVE_NONE _OVERLAY_BORDER_DISSOLVE_RADIAL
+//
 // The logic is annoying due to the many static if branch, so it has been extracted here to keep the overlay-specific code clean :
 // - add the required properties in the property block
 // - add the multi_compile variants. Omit multi_compile for modes that are not to be defined.
@@ -98,7 +100,7 @@ struct OverlayVertexInputExtra {
 struct OverlayFragmentInputExtra {
     // Overlay specific data for FragmentInput struct. Depend on static mode.
 
-    #if defined(_OVERLAY_BORDER_DISSOLVE_RADIAL) || defined(_OVERLAY_BORDER_DISSOLVE_TRAIL)
+    #if defined(_OVERLAY_BORDER_DISSOLVE_RADIAL)
     float2 dissolve_uv : DISSOLVE_UV;
     #endif
 
@@ -149,7 +151,7 @@ float4 OverlayObjectToClipPos(float3 position_os, OverlayVertexInputExtra input,
     float2 centered_uv = 2 * input.uv0 - 1; // [-1, 1] for an input UV square
 
     // Determine if we need fullscreen fragment
-    #if defined(_OVERLAY_MODE_MESH)
+    #if defined(_OVERLAY_MODE_MESH) || defined(_OVERLAY_MODE_TRAIL)
     fullscreen = false;
     #elif defined(_OVERLAY_MODE_FULLSCREEN)
     fullscreen = _Overlay_Fullscreen_Enable && _VRChatMirrorMode == 0 && _VRChatCameraMode * _Overlay_Fullscreen_Only_Main_Camera == 0;
@@ -207,7 +209,7 @@ float4 OverlayObjectToClipPos(float3 position_os, OverlayVertexInputExtra input,
         position_cs = UnityObjectToClipPos(position_os);
     }
 
-    #if defined(_OVERLAY_BORDER_DISSOLVE_RADIAL) || defined(_OVERLAY_BORDER_DISSOLVE_TRAIL)
+    #if defined(_OVERLAY_BORDER_DISSOLVE_RADIAL)
     output.dissolve_uv = centered_uv;
     #endif
     #if defined(_OVERLAY_MODE_BILLBOARD_SPHERE)
@@ -224,13 +226,14 @@ float4 OverlayObjectToClipPos(float3 position_os, OverlayVertexInputExtra input,
 void OverlayFragment(OverlayFragmentInputExtra input, out OverlayFragmentOutputExtra output) {
     // In fragment, discard and patch depth, depending on overlay mode
     
-    #if defined(_OVERLAY_BORDER_DISSOLVE_RADIAL) || defined(_OVERLAY_BORDER_DISSOLVE_TRAIL)
+    #if defined(_OVERLAY_BORDER_DISSOLVE_RADIAL)
     {
         // UV is centered ([-1, 1]) from uv0
-        #if defined(_OVERLAY_BORDER_DISSOLVE_RADIAL)
+        #if !defined(_OVERLAY_MODE_TRAIL)
+        // Radial sdf
         const float sdf = length(input.dissolve_uv);
         const float2 gradient = input.dissolve_uv / sdf; // normalize
-        #elif defined(_OVERLAY_BORDER_DISSOLVE_TRAIL)
+        #else
         // Trail : UV.x is unbounded along the trail, and y goes from [-1,1]. Use Static mode in the trail renderer.
         const float sdf = abs(input.dissolve_uv.y);
         const float2 gradient = float2(0, sign(input.dissolve_uv.y));

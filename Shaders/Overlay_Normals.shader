@@ -9,12 +9,12 @@
 
 Shader "Lereldarion/Overlay/Normals" {
     Properties {
-        [KeywordEnum(Mesh, Fullscreen, Billboard Sphere)] _Overlay_Mode("Overlay mode", Float) = 0
+        [KeywordEnum(Mesh, Fullscreen, Billboard Sphere, Trail)] _Overlay_Mode("Overlay mode", Float) = 0
         [IntRange] _Overlay_Fullscreen_Vertex_Order("Fullscreen vertex order (mesh dependent)", Range(0, 2)) = 0
         [ToggleUI] _Overlay_Fullscreen_Enable("Fullscreen mode : dynamic toggle", Float) = 1
         [ToggleUI] _Overlay_Fullscreen_Only_Main_Camera("Fullscreen mode : restricted to main camera", Float) = 1
         [Enum(Surface Only, 0, Filled, 1)] _Overlay_Sphere_Filled("Sphere type", Float) = 1
-        [KeywordEnum(None, Radial, Trail)] _Overlay_Border_Dissolve("Border dissolve", Float) = 0
+        [KeywordEnum(None, Radial)] _Overlay_Border_Dissolve("Border dissolve", Float) = 0
         [NoScaleOffset] _Overlay_Noise_Texture("Noise texture", 2D) = "" {}
         _Overlay_Border_Dissolve_Config("Border dissolve config (radius, +-transition thickness, scale, time factor)", Vector) = (0.8, 0.2, 1, 0.1)
     }
@@ -25,7 +25,7 @@ Shader "Lereldarion/Overlay/Normals" {
             "VRCFallback" = "Hidden"
             "PreviewType" = "Plane"
             "IgnoreProjector" = "True"
-            "DisableBatching" = "True" // For Billboard sphere mode only
+            "DisableBatching" = "True" // Billboard sphere mode needs object center
         }
         
         Cull Off
@@ -39,8 +39,8 @@ Shader "Lereldarion/Overlay/Normals" {
 
             #pragma target 5.0
             #pragma multi_compile_instancing
-            #pragma shader_feature_local _OVERLAY_MODE_MESH _OVERLAY_MODE_FULLSCREEN _OVERLAY_MODE_BILLBOARD_SPHERE
-            #pragma shader_feature_local _OVERLAY_BORDER_DISSOLVE_NONE _OVERLAY_BORDER_DISSOLVE_RADIAL _OVERLAY_BORDER_DISSOLVE_TRAIL
+            #pragma shader_feature_local _OVERLAY_MODE_MESH _OVERLAY_MODE_FULLSCREEN _OVERLAY_MODE_BILLBOARD_SPHERE _OVERLAY_MODE_TRAIL
+            #pragma shader_feature_local _OVERLAY_BORDER_DISSOLVE_NONE _OVERLAY_BORDER_DISSOLVE_RADIAL
             #pragma instancing_options procedural:vertInstancingSetup
 
             #pragma vertex vertex_stage
